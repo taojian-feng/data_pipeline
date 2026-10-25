@@ -1,0 +1,41 @@
+name: deploy
+
+# terraform plan on demand; apply only after a reviewer approves the "aws-dev" environment.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the plan after approval (otherwise plan only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for AWS, no stored keys
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: aws-dev
+    defaults:
+      run:
+        working-directory: infra/terraform
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: >
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=gridlake/dev.tfstate"
+          -backend-config="region=us-east-1"
+      - run: terraform plan -input=false -var environment=dev -out=tfplan
+      - if: inputs.apply
+        run: terraform apply -input=false tfplan
