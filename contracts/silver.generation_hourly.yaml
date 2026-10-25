@@ -1,0 +1,21 @@
+name: silver.generation_hourly
+version: 1.0.0
+layer: silver
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: internal
+description: Typed, deduplicated hourly net generation per balancing authority and energy source.
+primary_key: [period, ba_code, fuel_type]
+partition_by:
+  - {column: period, transform: day}
+columns:
+  - {name: period, type: timestamp, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: fuel_type, type: string, nullable: false}
+  - {name: generation_mwh, type: double, nullable: false, business_term: Net Generation}
+  - {name: _updated_ts, type: timestamp, nullable: false}
+quality:
+  - {rule: unique, columns: [period, ba_code, fuel_type], severity: error}
+  - {rule: range, column: generation_mwh, min: -500, max: 150000, severity: error, description: Small negatives are legitimate (station load / storage charging)}
+  - {rule: referential, column: fuel_type, ref_table: silver.dim_fuel_type, ref_column: fuel_type, severity: error}
+  - {rule: referential, column: ba_code, ref_table: silver.dim_balancing_authority, ref_column: ba_code, severity: error}

@@ -1,0 +1,26 @@
+name: bronze.eia_fuel_type_data
+version: 1.0.0
+layer: bronze
+domain: grid-operations
+owner: data-platform@gridlake.example
+classification: internal
+description: >
+  Raw hourly net generation by energy source per balancing authority, as delivered by
+  EIA-930 (electricity/rto/fuel-type-data).
+source: EIA Open Data API v2 electricity/rto/fuel-type-data (or deterministic synthetic replica)
+partition_by:
+  - {column: _ingest_ts, transform: day}
+columns:
+  - {name: period, type: string, nullable: false}
+  - {name: respondent, type: string, nullable: false}
+  - {name: respondent_name, type: string}
+  - {name: fueltype, type: string, nullable: false}
+  - {name: type_name, type: string}
+  - {name: value, type: string}
+  - {name: value_units, type: string}
+  - {name: _batch_id, type: string, nullable: false}
+  - {name: _ingest_ts, type: timestamp, nullable: false}
+  - {name: _source, type: string, nullable: false}
+quality:
+  - {rule: row_count_min, min: 1, severity: error}
+  - {rule: not_null, columns: [period, respondent, fueltype], severity: error}

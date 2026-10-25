@@ -1,0 +1,28 @@
+name: gold.demand_forecast_features
+version: 1.0.0
+layer: gold
+domain: grid-operations
+owner: ml-platform@gridlake.example
+classification: internal
+description: >
+  Data product: point-in-time-correct feature set for hourly demand forecasting models
+  (SageMaker training). Features only use information available before the target hour.
+primary_key: [period, ba_code]
+partition_by:
+  - {column: period, transform: day}
+consumers: [sagemaker-training]
+columns:
+  - {name: period, type: timestamp, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: hour_of_day, type: int, nullable: false}
+  - {name: day_of_week, type: int, nullable: false}
+  - {name: is_weekend, type: boolean, nullable: false}
+  - {name: demand_lag_24h, type: double}
+  - {name: demand_lag_168h, type: double}
+  - {name: demand_rolling_24h_mean, type: double, description: Mean of the 24 hours ending 24h before target (no leakage)}
+  - {name: eia_forecast_mwh, type: double}
+  - {name: target_demand_mwh, type: double, nullable: false}
+quality:
+  - {rule: unique, columns: [period, ba_code], severity: error}
+  - {rule: range, column: hour_of_day, min: 0, max: 23, severity: error}
+  - {rule: not_null, columns: [demand_lag_24h], severity: warn}

@@ -1,0 +1,23 @@
+name: gold.grid_reliability_daily
+version: 1.0.0
+layer: gold
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: confidential
+description: Data product - daily frequency-excursion statistics per balancing authority derived from substation telemetry.
+primary_key: [date, ba_code]
+partition_by:
+  - {column: date, transform: identity}
+consumers: [reliability-engineering]
+columns:
+  - {name: date, type: date, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: substations_reporting, type: long, nullable: false}
+  - {name: minutes_observed, type: long, nullable: false}
+  - {name: excursion_minutes, type: long, nullable: false, description: "Substation-minutes in which frequency left the 59.95-60.05 Hz band", business_term: Frequency Excursion}
+  - {name: min_frequency_hz, type: double}
+  - {name: max_frequency_hz, type: double}
+  - {name: max_load_mw, type: double}
+quality:
+  - {rule: unique, columns: [date, ba_code], severity: error}
+  - {rule: expression, sql: "excursion_minutes <= minutes_observed", severity: error}

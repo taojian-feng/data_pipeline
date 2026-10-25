@@ -1,0 +1,8 @@
+.git
+.venv
+venv
+.gridlake
+**/__pycache__
+.pytest_cache
+.ruff_cache
+infra/terraform/.terraform

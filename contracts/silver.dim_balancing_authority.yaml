@@ -1,0 +1,19 @@
+name: silver.dim_balancing_authority
+version: 1.0.0
+layer: silver
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: public
+description: Conformed balancing-authority dimension with region and interconnection hierarchy.
+primary_key: [ba_code]
+columns:
+  - {name: ba_code, type: string, nullable: false, description: EIA balancing authority code, business_term: Balancing Authority}
+  - {name: ba_name, type: string, nullable: false}
+  - {name: region_code, type: string, nullable: false, business_term: Region}
+  - {name: region_name, type: string, nullable: false}
+  - {name: interconnection, type: string, nullable: false, business_term: Interconnection}
+  - {name: timezone, type: string, nullable: false}
+  - {name: aliases, type: string, description: Pipe-separated common names (used for entity linking)}
+quality:
+  - {rule: unique, columns: [ba_code], severity: error}
+  - {rule: accepted_values, column: interconnection, values: [Eastern, Western, ERCOT], severity: error}

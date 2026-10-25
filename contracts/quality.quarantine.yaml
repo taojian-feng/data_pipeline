@@ -1,0 +1,15 @@
+name: quality.quarantine
+version: 1.0.0
+layer: ops
+domain: data-platform
+owner: data-platform@gridlake.example
+classification: confidential
+description: Rows rejected by error-severity row-level rules, kept verbatim with the failing rule names so data stewards can triage and replay them.
+partition_by:
+  - {column: quarantined_ts, transform: day}
+columns:
+  - {name: run_id, type: string, nullable: false}
+  - {name: table_name, type: string, nullable: false}
+  - {name: failed_rules, type: string, nullable: false}
+  - {name: record_json, type: string, nullable: false}
+  - {name: quarantined_ts, type: timestamp, nullable: false}

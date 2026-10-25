@@ -1,0 +1,28 @@
+name: bronze.grid_telemetry
+version: 1.0.0
+layer: bronze
+domain: grid-operations
+owner: data-platform@gridlake.example
+classification: confidential
+description: >
+  Substation telemetry events (frequency, load, voltage) consumed from the streaming
+  topic in micro-batches. At-least-once delivery: duplicates and out-of-order events
+  are expected and resolved in silver. Classified confidential (critical-infrastructure
+  operational data).
+source: "Kinesis Data Stream grid-telemetry (local: file-backed partitioned log)"
+partition_by:
+  - {column: event_ts, transform: day}
+columns:
+  - {name: event_id, type: string, nullable: false}
+  - {name: substation_id, type: string, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: event_ts, type: timestamp, nullable: false}
+  - {name: frequency_hz, type: double}
+  - {name: load_mw, type: double}
+  - {name: voltage_kv, type: double}
+  - {name: _partition, type: string, nullable: false, description: Stream partition (Kinesis shard id on AWS)}
+  - {name: _offset, type: string, nullable: false, description: Offset within the partition (Kinesis sequence number on AWS)}
+  - {name: _is_late, type: boolean, nullable: false, description: Arrived behind the watermark}
+  - {name: _ingest_ts, type: timestamp, nullable: false}
+quality:
+  - {rule: not_null, columns: [event_id, substation_id, event_ts], severity: error}

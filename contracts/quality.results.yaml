@@ -1,0 +1,18 @@
+name: quality.results
+version: 1.0.0
+layer: ops
+domain: data-platform
+owner: data-platform@gridlake.example
+classification: internal
+description: Outcome of every data-quality rule evaluation, one row per rule per table per run. Feeds DQ dashboards and alerting.
+partition_by:
+  - {column: evaluated_ts, transform: day}
+columns:
+  - {name: run_id, type: string, nullable: false}
+  - {name: table_name, type: string, nullable: false}
+  - {name: rule, type: string, nullable: false}
+  - {name: severity, type: string, nullable: false}
+  - {name: failed_rows, type: long, nullable: false}
+  - {name: total_rows, type: long, nullable: false}
+  - {name: passed, type: boolean, nullable: false}
+  - {name: evaluated_ts, type: timestamp, nullable: false}

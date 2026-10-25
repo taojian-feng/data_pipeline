@@ -1,0 +1,27 @@
+name: silver.demand_hourly
+version: 1.0.0
+layer: silver
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: internal
+description: >
+  Typed, deduplicated hourly operating data per balancing authority, pivoted to one row
+  per (period, ba_code). Latest-ingested value wins for restated hours (EIA revises data).
+primary_key: [period, ba_code]
+partition_by:
+  - {column: period, transform: day}
+freshness: {column: period, max_lag_hours: 72, severity: warn}
+columns:
+  - {name: period, type: timestamp, nullable: false, description: Start of UTC hour}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: demand_mwh, type: double, description: Actual demand, business_term: Demand}
+  - {name: forecast_mwh, type: double, description: Day-ahead demand forecast, business_term: Demand Forecast}
+  - {name: net_generation_mwh, type: double, business_term: Net Generation}
+  - {name: interchange_mwh, type: double, description: Total interchange (positive = net export), business_term: Interchange}
+  - {name: _updated_ts, type: timestamp, nullable: false}
+quality:
+  - {rule: unique, columns: [period, ba_code], severity: error}
+  - {rule: not_null, columns: [demand_mwh], severity: error}
+  - {rule: range, column: demand_mwh, min: 0, max: 250000, severity: error}
+  - {rule: range, column: forecast_mwh, min: 0, max: 250000, severity: warn}
+  - {rule: referential, column: ba_code, ref_table: silver.dim_balancing_authority, ref_column: ba_code, severity: error}

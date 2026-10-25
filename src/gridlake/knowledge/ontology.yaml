@@ -1,0 +1,47 @@
+# GridLake ontology: the vocabulary AI agents use to reason about the grid AND about the
+# data estate that describes it. Exported to OWL/Turtle; every triple written to the
+# knowledge graph is validated against these domains and ranges (agent guardrails).
+namespace: "https://gridlake.example/ontology#"
+prefix: gl
+
+classes:
+  GridEntity: {comment: Anything that is part of the physical or organisational power grid}
+  BalancingAuthority: {subClassOf: GridEntity, comment: Entity that balances supply and demand within its area in real time}
+  Region: {subClassOf: GridEntity, comment: EIA geographic region grouping balancing authorities}
+  Interconnection: {subClassOf: GridEntity, comment: Synchronous AC grid (Eastern, Western, ERCOT)}
+  Substation: {subClassOf: GridEntity, comment: Site whose telemetry is streamed into the lakehouse}
+  EnergySource: {comment: Fuel or resource used to generate electricity}
+  FuelCategory: {comment: Grouping of energy sources (Fossil, Nuclear, Renewable, Other)}
+  Dataset: {comment: A governed Iceberg table in the lakehouse}
+  DataProduct: {subClassOf: Dataset, comment: Gold-layer dataset published for downstream consumers}
+  Column: {comment: A column of a dataset}
+  BusinessTerm: {comment: Business glossary concept a column measures}
+  Team: {comment: Accountable data owner}
+  Consumer: {comment: Downstream application or use case of a data product}
+
+object_properties:
+  operatesInRegion: {domain: BalancingAuthority, range: Region}
+  partOfInterconnection: {domain: BalancingAuthority, range: Interconnection}
+  belongsTo: {domain: Substation, range: BalancingAuthority}
+  hasFuelCategory: {domain: EnergySource, range: FuelCategory}
+  generatesFrom: {domain: BalancingAuthority, range: EnergySource, comment: Source supplies >= 5% of the BA's generation over the observed window}
+  derivedFrom: {domain: Dataset, range: Dataset, comment: Lineage edge observed from OpenLineage events}
+  ownedBy: {domain: Dataset, range: Team}
+  hasColumn: {domain: Dataset, range: Column}
+  measures: {domain: Column, range: BusinessTerm}
+  consumedBy: {domain: DataProduct, range: Consumer}
+  aboutEntityType: {domain: Dataset, range: Class, comment: Grid entity type a dataset holds facts about}
+
+datatype_properties:
+  code: {domain: GridEntity, range: string}
+  altLabel: {domain: GridEntity, range: string, comment: Alternative name used for entity linking (cf. skos:altLabel)}
+  timezone: {domain: BalancingAuthority, range: string}
+  isRenewable: {domain: EnergySource, range: boolean}
+  emissionFactorKgPerMWh: {domain: EnergySource, range: decimal}
+  generationSharePct: {domain: BalancingAuthority, range: string, comment: "JSON map of energy source -> % share over the observed window"}
+  avgRenewableSharePct: {domain: BalancingAuthority, range: decimal}
+  avgDailyPeakMWh: {domain: BalancingAuthority, range: decimal}
+  classification: {domain: Dataset, range: string, values: [public, internal, confidential]}
+  layer: {domain: Dataset, range: string, values: [bronze, silver, gold, ops]}
+  contractVersion: {domain: Dataset, range: string}
+  dataType: {domain: Column, range: string}

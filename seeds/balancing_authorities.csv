@@ -1,0 +1,9 @@
+ba_code,ba_name,region_code,region_name,interconnection,timezone,peak_scale_mw,aliases
+CISO,California Independent System Operator,CAL,California,Western,America/Los_Angeles,32000,CAISO|California ISO
+ERCO,"Electric Reliability Council of Texas, Inc.",TEX,Texas,ERCOT,America/Chicago,62000,ERCOT
+PJM,"PJM Interconnection, LLC",MIDA,Mid-Atlantic,Eastern,America/New_York,120000,PJM Interconnection
+MISO,"Midcontinent Independent System Operator, Inc.",MIDW,Midwest,Eastern,America/Chicago,95000,Midcontinent ISO
+NYIS,New York Independent System Operator,NY,New York,Eastern,America/New_York,24000,NYISO|New York ISO
+ISNE,ISO New England,NE,New England,Eastern,America/New_York,18000,ISO-NE
+SWPP,Southwest Power Pool,CENT,Central,Eastern,America/Chicago,42000,SPP
+BPAT,Bonneville Power Administration,NW,Northwest,Western,America/Los_Angeles,9000,BPA|Bonneville

@@ -1,0 +1,21 @@
+name: gold.fuel_mix_daily
+version: 1.0.0
+layer: gold
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: public
+description: Data product - daily generation mix per balancing authority and energy source.
+primary_key: [date, ba_code, fuel_type]
+partition_by:
+  - {column: date, transform: identity}
+consumers: [bi-dashboards, knowledge-graph]
+columns:
+  - {name: date, type: date, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: fuel_type, type: string, nullable: false}
+  - {name: fuel_category, type: string, nullable: false}
+  - {name: generation_mwh, type: double, nullable: false}
+  - {name: share_pct, type: double, nullable: false, business_term: Fuel Share}
+quality:
+  - {rule: unique, columns: [date, ba_code, fuel_type], severity: error}
+  - {rule: range, column: share_pct, min: 0, max: 100, severity: error}

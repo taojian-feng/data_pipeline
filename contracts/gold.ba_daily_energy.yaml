@@ -1,0 +1,33 @@
+name: gold.ba_daily_energy
+version: 1.0.0
+layer: gold
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: public
+description: >
+  Data product: daily energy, peak, forecast accuracy, renewable share and carbon intensity
+  per balancing authority. Consumers: BI dashboards, sustainability reporting, RAG knowledge base.
+primary_key: [date, ba_code]
+partition_by:
+  - {column: date, transform: identity}
+consumers: [bi-dashboards, sustainability-reporting, knowledge-base]
+columns:
+  - {name: date, type: date, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: ba_name, type: string, nullable: false}
+  - {name: region_name, type: string, nullable: false}
+  - {name: interconnection, type: string, nullable: false}
+  - {name: total_demand_mwh, type: double, nullable: false, business_term: Daily Demand}
+  - {name: peak_demand_mwh, type: double, nullable: false, business_term: Peak Demand}
+  - {name: peak_hour_utc, type: int, nullable: false}
+  - {name: forecast_mape_pct, type: double, description: Mean absolute percentage error of the day-ahead forecast, business_term: Forecast Accuracy}
+  - {name: net_generation_mwh, type: double}
+  - {name: renewable_share_pct, type: double, description: Solar + wind + hydro as % of positive generation, business_term: Renewable Share}
+  - {name: carbon_intensity_kg_per_mwh, type: double, description: Generation-weighted CO2 intensity, business_term: Carbon Intensity}
+  - {name: total_emissions_t, type: double, business_term: Emissions}
+  - {name: hours_reported, type: int, nullable: false}
+quality:
+  - {rule: unique, columns: [date, ba_code], severity: error}
+  - {rule: range, column: renewable_share_pct, min: 0, max: 100, severity: error}
+  - {rule: range, column: hours_reported, min: 1, max: 24, severity: error}
+  - {rule: expression, sql: "peak_demand_mwh <= total_demand_mwh", description: Peak hour cannot exceed daily total, severity: error}

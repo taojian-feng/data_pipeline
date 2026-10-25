@@ -1,0 +1,9 @@
+fuel_type,fuel_name,fuel_category,is_renewable,emission_factor_kg_per_mwh
+COL,Coal,Fossil,false,1000
+NG,Natural Gas,Fossil,false,410
+OIL,Petroleum,Fossil,false,840
+NUC,Nuclear,Nuclear,false,0
+SUN,Solar,Renewable,true,0
+WND,Wind,Renewable,true,0
+WAT,Hydro,Renewable,true,0
+OTH,Other,Other,false,300

@@ -1,0 +1,27 @@
+name: bronze.eia_region_data
+version: 1.0.0
+layer: bronze
+domain: grid-operations
+owner: data-platform@gridlake.example
+classification: internal
+description: >
+  Raw hourly balancing-authority operating data as delivered by the EIA-930 API
+  (electricity/rto/region-data). Stored as-received (string values) plus ingestion
+  metadata so any downstream table can be rebuilt by replay.
+source: EIA Open Data API v2 electricity/rto/region-data (or deterministic synthetic replica)
+partition_by:
+  - {column: _ingest_ts, transform: day}
+columns:
+  - {name: period, type: string, nullable: false, description: "UTC hour, EIA format YYYY-MM-DDTHH"}
+  - {name: respondent, type: string, nullable: false, description: Balancing authority code}
+  - {name: respondent_name, type: string, description: Balancing authority name}
+  - {name: type, type: string, nullable: false, description: "Series type: D demand, DF day-ahead demand forecast, NG net generation, TI total interchange"}
+  - {name: type_name, type: string}
+  - {name: value, type: string, description: Value as delivered (may be null or malformed)}
+  - {name: value_units, type: string}
+  - {name: _batch_id, type: string, nullable: false, description: Content hash of the landed batch (idempotency key)}
+  - {name: _ingest_ts, type: timestamp, nullable: false}
+  - {name: _source, type: string, nullable: false}
+quality:
+  - {rule: row_count_min, min: 1, severity: error}
+  - {rule: not_null, columns: [period, respondent, type], severity: error}

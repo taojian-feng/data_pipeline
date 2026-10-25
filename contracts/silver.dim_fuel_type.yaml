@@ -1,0 +1,17 @@
+name: silver.dim_fuel_type
+version: 1.0.0
+layer: silver
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: public
+description: Energy source dimension with renewable flag and illustrative CO2 emission factors.
+primary_key: [fuel_type]
+columns:
+  - {name: fuel_type, type: string, nullable: false, business_term: Energy Source}
+  - {name: fuel_name, type: string, nullable: false}
+  - {name: fuel_category, type: string, nullable: false}
+  - {name: is_renewable, type: boolean, nullable: false}
+  - {name: emission_factor_kg_per_mwh, type: double, nullable: false, description: Illustrative kg CO2 per MWh generated}
+quality:
+  - {rule: unique, columns: [fuel_type], severity: error}
+  - {rule: range, column: emission_factor_kg_per_mwh, min: 0, max: 1500, severity: error}

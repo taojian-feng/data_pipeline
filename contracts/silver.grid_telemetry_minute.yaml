@@ -1,0 +1,24 @@
+name: silver.grid_telemetry_minute
+version: 1.0.0
+layer: silver
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: confidential
+description: Exactly-once, minute-level substation telemetry aggregated from deduplicated stream events.
+primary_key: [minute_ts, substation_id]
+partition_by:
+  - {column: minute_ts, transform: day}
+columns:
+  - {name: minute_ts, type: timestamp, nullable: false}
+  - {name: substation_id, type: string, nullable: false}
+  - {name: ba_code, type: string, nullable: false}
+  - {name: avg_frequency_hz, type: double, business_term: Grid Frequency}
+  - {name: min_frequency_hz, type: double}
+  - {name: max_frequency_hz, type: double}
+  - {name: max_load_mw, type: double}
+  - {name: avg_voltage_kv, type: double}
+  - {name: event_count, type: long, nullable: false}
+  - {name: _updated_ts, type: timestamp, nullable: false}
+quality:
+  - {rule: unique, columns: [minute_ts, substation_id], severity: error}
+  - {rule: range, column: avg_frequency_hz, min: 59.0, max: 61.0, severity: error}
