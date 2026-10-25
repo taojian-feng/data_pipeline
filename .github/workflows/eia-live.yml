@@ -1,0 +1,39 @@
+name: eia-live
+
+# Runs the pipeline against the real EIA API. Needs the repository secret EIA_API_KEY.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Days of history to load
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - name: Run pipeline on live EIA-930 data
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          test -n "$EIA_API_KEY" || { echo "Set the EIA_API_KEY repository secret first"; exit 1; }
+          gridlake run --days "${{ inputs.days }}" --telemetry-hours 1
+          gridlake quality
+          gridlake sql "SELECT date, ba_code, total_demand_mwh, renewable_share_pct FROM gold_ba_daily_energy ORDER BY date DESC, ba_code LIMIT 16"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-run
+          path: |
+            .gridlake/runs/
+            .gridlake/lineage/
+            .gridlake/knowledge/graph.ttl
