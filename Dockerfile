@@ -8,7 +8,7 @@ COPY seeds ./seeds
 RUN pip wheel --no-cache-dir --wheel-dir /wheels .
 
 FROM python:3.12-slim
-RUN useradd --create-home --uid 10001 gridlake
+RUN useradd --create-home --uid 10001 gridlake && mkdir /data && chown gridlake:gridlake /data
 COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 USER gridlake
