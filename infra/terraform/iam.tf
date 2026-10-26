@@ -126,6 +126,15 @@ data "aws_iam_policy_document" "states" {
     resources = [aws_sns_topic.alerts.arn]
   }
   statement {
+    sid = "VendedLogsAndTracing" # required for logging_configuration / tracing_configuration
+    actions = [
+      "logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
+      "logs:ListLogDeliveries", "logs:PutResourcePolicy", "logs:DescribeResourcePolicies", "logs:DescribeLogGroups",
+      "xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets",
+    ]
+    resources = ["*"]
+  }
+  statement {
     actions   = ["bedrock:StartIngestionJob"]
     resources = ["arn:${data.aws_partition.current.partition}:bedrock:${var.region}:${local.account_id}:knowledge-base/*"]
   }

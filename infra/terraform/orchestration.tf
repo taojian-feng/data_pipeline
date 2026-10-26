@@ -46,9 +46,11 @@ locals {
 }
 
 resource "aws_sfn_state_machine" "pipeline" {
-  name     = "${local.name}-pipeline"
-  role_arn = aws_iam_role.states.arn
-  type     = "STANDARD"
+  name = "${local.name}-pipeline"
+  # IAM changes to the states role must propagate before CreateStateMachine checks them.
+  depends_on = [aws_iam_role_policy.states]
+  role_arn   = aws_iam_role.states.arn
+  type       = "STANDARD"
 
   logging_configuration {
     log_destination        = "${aws_cloudwatch_log_group.sfn.arn}:*"
