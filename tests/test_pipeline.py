@@ -208,7 +208,9 @@ def test_runs_on_tables_precreated_like_glue(settings, partitioned):
         pipe.lake.catalog.create_namespace_if_not_exists(c.namespace)
         spec = c.partition_spec() if partitioned else None
         pipe.lake.catalog.create_table(
-            name, schema=Schema(*fields), **({"partition_spec": spec} if spec else {})
+            name,
+            schema=Schema(*fields),
+            **({"partition_spec": spec} if spec else {}),
         )
     summary = pipe.run(START, END, telemetry_hours=2)
     assert summary.ok
@@ -218,3 +220,28 @@ def test_runs_on_tables_precreated_like_glue(settings, partitioned):
     ts = pipe.lake.table("quality.results").schema().find_field("evaluated_ts")
     assert isinstance(ts.field_type, TimestamptzType)
     assert pipe.lake.table("gold.ba_daily_energy").spec().fields  # partitioning evolved too
+
+
+def test_recovers_from_an_interrupted_type_swap(settings):
+    """A run that died mid-swap leaves ``<col>__old`` (partitioned) next to the new column."""
+    from pyiceberg.types import TimestamptzType
+
+    from gridlake.contracts import TRANSFORMS
+
+    pipe = Pipeline(settings)
+    c = pipe.contracts["quality.results"]
+    pipe.lake.catalog.create_namespace_if_not_exists(c.namespace)
+    t = pipe.lake.catalog.create_table("quality.results", schema=c.iceberg_schema())
+    with t.update_schema() as u:
+        u.rename_column("evaluated_ts", "evaluated_ts__old")
+    t = pipe.lake.catalog.load_table("quality.results")
+    with t.update_schema() as u:
+        u.add_column("evaluated_ts", TimestamptzType())
+    t = pipe.lake.catalog.load_table("quality.results")
+    with t.update_spec() as s:
+        s.add_field("evaluated_ts__old", TRANSFORMS["day"](), "evaluated_ts_day")
+    summary = pipe.run(START, END, telemetry_hours=2)
+    assert summary.ok
+    t = pipe.lake.table("quality.results")
+    assert "evaluated_ts__old" not in t.schema().column_names
+    assert t.schema().find_column_name(t.spec().fields[0].source_id) == "evaluated_ts"

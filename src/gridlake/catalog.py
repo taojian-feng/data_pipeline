@@ -20,6 +20,8 @@ from pyiceberg.table import Table
 from gridlake.config import Settings
 from gridlake.contracts import TRANSFORMS, Contract
 
+OLD = "__old"  # suffix for a column being swapped out by Lakehouse._reconcile_types
+
 
 def get_catalog(settings: Settings) -> Catalog:
     if settings.catalog_type == "local":
@@ -85,7 +87,8 @@ class Lakehouse:
     def _reconcile_types(self, table: Table) -> Table:
         """Glue's Iceberg CREATE (Terraform) only knows zone-less ``timestamp``. While a
         pre-created table is still empty, swap any column whose type differs from the contract
-        for one of the contract type, keeping column order. Nothing is rewritten: no data yet."""
+        for one of the contract type, keeping column order. Nothing is rewritten: no data yet.
+        All changes go in one transaction, and leftovers of an interrupted swap are dropped."""
         name = ".".join(table.name()[-2:])
         c = self.contracts.get(name)
         if c is None or table.current_snapshot() is not None:
@@ -93,27 +96,33 @@ class Lakehouse:
         want = {f.name: f.field_type for f in c.iceberg_schema().fields}
         have = table.schema()
         drift = [f.name for f in have.fields if f.name in want and f.field_type != want[f.name]]
-        if not drift:
+        leftover = [
+            f.name for f in have.fields if f.name.endswith(OLD) and f.name[: -len(OLD)] in want
+        ]
+        if not drift and not leftover:
             return table
-        ids = {have.find_field(col).field_id for col in drift}
-        stale = [p.name for p in table.spec().fields if p.source_id in ids]
-        if stale:  # _evolve_partitioning re-adds these on the swapped columns
-            with table.update_spec() as spec:
-                for p in stale:
-                    spec.remove_field(p)
-            table = self.catalog.load_table(name)
-        with table.update_schema() as update:
-            for col in drift:
-                update.rename_column(col, f"{col}__old")
-        table = self.catalog.load_table(name)
-        with table.update_schema() as update:
-            for col in drift:
-                update.add_column(col, want[col], doc=have.find_field(col).doc)
-                update.move_after(col, f"{col}__old")
-        table = self.catalog.load_table(name)
-        with table.update_schema() as update:
-            for col in drift:
-                update.delete_column(f"{col}__old")
+        doomed = {have.find_field(col).field_id for col in drift + leftover}
+        stale = [p.name for p in table.spec().fields if p.source_id in doomed]
+        with table.transaction() as tx:
+            if stale:  # _evolve_partitioning re-adds these on the swapped columns
+                with tx.update_spec() as spec:
+                    for p in stale:
+                        spec.remove_field(p)
+            if leftover:
+                with tx.update_schema() as update:
+                    for col in leftover:
+                        update.delete_column(col)
+            if drift:
+                with tx.update_schema() as update:
+                    for col in drift:
+                        update.rename_column(col, f"{col}{OLD}")
+                with tx.update_schema() as update:
+                    for col in drift:
+                        update.add_column(col, want[col], doc=have.find_field(col).doc)
+                        update.move_after(col, f"{col}{OLD}")
+                with tx.update_schema() as update:
+                    for col in drift:
+                        update.delete_column(f"{col}{OLD}")
         return self.catalog.load_table(name)
 
     def _evolve_partitioning(self, table: Table) -> Table:
