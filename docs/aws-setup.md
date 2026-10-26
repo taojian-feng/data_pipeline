@@ -21,6 +21,11 @@ aws cloudformation deploy \
 aws cloudformation describe-stacks --stack-name gridlake-bootstrap --query "Stacks[0].Outputs"
 ```
 
+Already created the stack from an earlier version of the template? Update it: in the
+console choose the stack, Update, "Replace existing template", and upload the file again
+(or re-run the `aws cloudformation deploy` command). GitHub's OIDC subject now contains
+immutable owner and repo ids, which the earlier template did not accept.
+
 If the stack fails because the GitHub OIDC provider already exists, re-run it with the
 parameter `CreateOidcProvider=false`.
 

@@ -5,9 +5,19 @@ Description: >
   Terraform state bucket. No long-lived AWS keys are stored in GitHub.
 
 Parameters:
-  GitHubRepo:
+  GitHubOwner:
     Type: String
-    Default: taojian-feng/data_pipeline
+    Default: taojian-feng
+  GitHubOwnerId:
+    Type: String
+    Default: "166564305"
+    Description: Numeric GitHub user/org id (GitHub now puts immutable ids in the OIDC subject).
+  GitHubRepoName:
+    Type: String
+    Default: data_pipeline
+  GitHubRepoId:
+    Type: String
+    Default: "1433642899"
   GitHubEnvironment:
     Type: String
     Default: aws-dev
@@ -60,7 +70,11 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:${GitHubEnvironment}
+                # Accept both subject formats: the newer one with immutable owner/repo ids
+                # (cannot be spoofed by re-creating a repo with the same name) and the legacy one.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepoName}@${GitHubRepoId}:environment:${GitHubEnvironment}
+                  - !Sub repo:${GitHubOwner}/${GitHubRepoName}:environment:${GitHubEnvironment}
       # PowerUserAccess covers every service gridlake uses except IAM; IAM is limited
       # below to roles and policies named gridlake-*.
       ManagedPolicyArns:
