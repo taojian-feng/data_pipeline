@@ -1,0 +1,46 @@
+name: aws-smoke
+
+# Starts one execution of the deployed state machine and reports each step's outcome,
+# with Lambda error logs for any failure.
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        default: us-east-2
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: aws-dev
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - name: Run the pipeline once
+        run: |
+          acct=$(aws sts get-caller-identity --query Account --output text)
+          sm="arn:aws:states:${AWS_REGION}:${acct}:stateMachine:gridlake-dev-pipeline"
+          start=$(date +%s000)
+          exec=$(aws stepfunctions start-execution --state-machine-arn "$sm" --input '{}' --query executionArn --output text)
+          echo "execution: $exec"
+          for i in $(seq 1 90); do
+            status=$(aws stepfunctions describe-execution --execution-arn "$exec" --query status --output text)
+            [ "$status" != RUNNING ] && break
+            sleep 20
+          done
+          echo "status: $status"
+          echo "--- steps"
+          aws stepfunctions get-execution-history --execution-arn "$exec" --max-items 200 \
+            --query 'events[?type==`TaskStateExited` || type==`TaskFailed` || type==`ExecutionFailed`].[timestamp,type,stateExitedEventDetails.name,taskFailedEventDetails.error,taskFailedEventDetails.cause]' \
+            --output text | cut -c1-1500
+          echo "--- lambda errors"
+          aws logs filter-log-events --log-group-name /aws/lambda/gridlake-dev-step --start-time "$start" \
+            --filter-pattern '?ERROR ?Traceback ?Exception ?error' --query 'events[].message' --output text | tail -c 6000 || true
+          [ "$status" = SUCCEEDED ]
