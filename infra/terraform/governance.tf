@@ -2,8 +2,14 @@
 # classification from its data contract; principals are granted tag expressions,
 # so new tables are governed automatically, with no per-table grants.
 
+# Lake Formation needs the IAM role behind the deploy session, not the STS session ARN.
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
+}
+
+# NOTE: this resource owns the account's Lake Formation admin list for the region.
 resource "aws_lakeformation_data_lake_settings" "this" {
-  admins = [data.aws_caller_identity.current.arn]
+  admins = distinct(concat([data.aws_iam_session_context.current.issuer_arn], var.lakeformation_admin_arns))
 }
 
 resource "aws_lakeformation_resource" "warehouse" {

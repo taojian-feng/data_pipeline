@@ -45,5 +45,17 @@ jobs:
           -backend-config="key=gridlake/dev.tfstate"
           -backend-config="region=${{ inputs.region }}"
       - run: terraform plan -input=false -var environment=dev -var region=${{ inputs.region }} -out=tfplan
+      # Lambdas need their container image to exist before they can be created:
+      # create the ECR repository, push the image, then apply everything.
       - if: inputs.apply
-        run: terraform apply -input=false tfplan
+        run: terraform apply -input=false -auto-approve -var environment=dev -var region=${{ inputs.region }} -target=aws_ecr_repository.pipeline
+      - if: inputs.apply
+        id: image
+        run: |
+          repo=$(terraform output -raw ecr_repository_url)
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${repo%%/*}"
+          docker build -f ../../Dockerfile.lambda -t "$repo:${GITHUB_SHA::12}" ../..
+          docker push "$repo:${GITHUB_SHA::12}"
+          echo "uri=$repo:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - if: inputs.apply
+        run: terraform apply -input=false -auto-approve -var environment=dev -var region=${{ inputs.region }} -var lambda_image_uri=${{ steps.image.outputs.uri }}

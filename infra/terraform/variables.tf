@@ -53,6 +53,12 @@ variable "reliability_principal_arns" {
   default     = []
 }
 
+variable "lakeformation_admin_arns" {
+  description = "Extra Lake Formation administrators (e.g. your console role) besides the deploy role."
+  type        = list(string)
+  default     = []
+}
+
 variable "alarm_email" {
   type    = string
   default = ""
