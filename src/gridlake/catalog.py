@@ -95,6 +95,13 @@ class Lakehouse:
         drift = [f.name for f in have.fields if f.name in want and f.field_type != want[f.name]]
         if not drift:
             return table
+        ids = {have.find_field(col).field_id for col in drift}
+        stale = [p.name for p in table.spec().fields if p.source_id in ids]
+        if stale:  # _evolve_partitioning re-adds these on the swapped columns
+            with table.update_spec() as spec:
+                for p in stale:
+                    spec.remove_field(p)
+            table = self.catalog.load_table(name)
         with table.update_schema() as update:
             for col in drift:
                 update.rename_column(col, f"{col}__old")

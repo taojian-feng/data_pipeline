@@ -186,9 +186,11 @@ def test_kinesis_lambda_record_decoding():
     assert t.column("_is_late").to_pylist() == [False, True]
 
 
-def test_runs_on_tables_precreated_like_glue(settings):
+@pytest.mark.parametrize("partitioned", [False, True])
+def test_runs_on_tables_precreated_like_glue(settings, partitioned):
     """Terraform creates the Glue Iceberg tables: unpartitioned, all-optional columns and
-    zone-less ``timestamp``. The pipeline must write into those as-is."""
+    zone-less ``timestamp``. The pipeline must write into those as-is, including after an
+    earlier failed run already evolved the (still empty) tables' partitioning."""
     from pyiceberg.schema import Schema
     from pyiceberg.types import NestedField, TimestampType, TimestamptzType
 
@@ -204,7 +206,10 @@ def test_runs_on_tables_precreated_like_glue(settings):
             for f in c.iceberg_schema().fields
         ]
         pipe.lake.catalog.create_namespace_if_not_exists(c.namespace)
-        pipe.lake.catalog.create_table(name, schema=Schema(*fields))
+        spec = c.partition_spec() if partitioned else None
+        pipe.lake.catalog.create_table(
+            name, schema=Schema(*fields), **({"partition_spec": spec} if spec else {})
+        )
     summary = pipe.run(START, END, telemetry_hours=2)
     assert summary.ok
     assert pipe.lake.read("gold.ba_daily_energy").num_rows == len(pipe.bas) * 9
