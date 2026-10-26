@@ -51,6 +51,7 @@ resource "aws_lakeformation_resource_lf_tags" "table" {
 
 # Pipeline roles: read/write everything they produce.
 resource "aws_lakeformation_permissions" "pipeline" {
+  depends_on  = [aws_lakeformation_resource_lf_tags.table]
   for_each    = { glue = aws_iam_role.glue.arn, lambda = aws_iam_role.lambda.arn }
   principal   = each.value
   permissions = ["SELECT", "INSERT", "DELETE", "DESCRIBE", "ALTER"]
@@ -61,6 +62,35 @@ resource "aws_lakeformation_permissions" "pipeline" {
       key    = aws_lakeformation_lf_tag.layer.key
       values = aws_lakeformation_lf_tag.layer.values
     }
+  }
+}
+
+# Databases are not tagged, so pipeline roles get database-level rights directly, plus
+# permission to create tables in the registered warehouse location.
+resource "aws_lakeformation_permissions" "pipeline_database" {
+  for_each = {
+    for pair in setproduct(["glue", "lambda"], tolist(local.namespaces)) : "${pair[0]}-${pair[1]}" => {
+      principal = pair[0] == "glue" ? aws_iam_role.glue.arn : aws_iam_role.lambda.arn
+      database  = pair[1]
+    }
+  }
+  principal   = each.value.principal
+  permissions = ["DESCRIBE", "CREATE_TABLE", "ALTER"]
+
+  database {
+    name = aws_glue_catalog_database.layer[each.value.database].name
+  }
+
+  depends_on = [aws_lakeformation_data_lake_settings.this]
+}
+
+resource "aws_lakeformation_permissions" "pipeline_location" {
+  for_each    = { glue = aws_iam_role.glue.arn, lambda = aws_iam_role.lambda.arn }
+  principal   = each.value
+  permissions = ["DATA_LOCATION_ACCESS"]
+
+  data_location {
+    arn = aws_lakeformation_resource.warehouse.arn
   }
 }
 

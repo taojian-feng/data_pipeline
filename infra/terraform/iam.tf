@@ -126,6 +126,11 @@ data "aws_iam_policy_document" "states" {
     resources = [aws_sns_topic.alerts.arn]
   }
   statement {
+    sid       = "EncryptedAlertTopic"
+    actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+    resources = [aws_kms_key.data.arn]
+  }
+  statement {
     sid = "VendedLogsAndTracing" # required for logging_configuration / tracing_configuration
     actions = [
       "logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
