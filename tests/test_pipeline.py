@@ -184,3 +184,32 @@ def test_kinesis_lambda_record_decoding():
     )
     assert t.column("_partition").to_pylist() == ["shardId-000000000003"] * 2
     assert t.column("_is_late").to_pylist() == [False, True]
+
+
+def test_runs_on_tables_precreated_like_glue(settings):
+    """Terraform creates the Glue Iceberg tables: unpartitioned, all-optional columns and
+    zone-less ``timestamp``. The pipeline must write into those as-is."""
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import NestedField, TimestampType, TimestamptzType
+
+    pipe = Pipeline(settings)
+    for name, c in pipe.contracts.items():
+        fields = [
+            NestedField(
+                f.field_id,
+                f.name,
+                TimestampType() if isinstance(f.field_type, TimestamptzType) else f.field_type,
+                required=False,
+            )
+            for f in c.iceberg_schema().fields
+        ]
+        pipe.lake.catalog.create_namespace_if_not_exists(c.namespace)
+        pipe.lake.catalog.create_table(name, schema=Schema(*fields))
+    summary = pipe.run(START, END, telemetry_hours=2)
+    assert summary.ok
+    assert pipe.lake.read("gold.ba_daily_energy").num_rows == len(pipe.bas) * 9
+    rerun = pipe.run(START, END, telemetry_hours=2)
+    assert rerun.ok
+    ts = pipe.lake.table("quality.results").schema().find_field("evaluated_ts")
+    assert isinstance(ts.field_type, TimestamptzType)
+    assert pipe.lake.table("gold.ba_daily_energy").spec().fields  # partitioning evolved too

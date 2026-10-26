@@ -64,7 +64,7 @@ class Lakehouse:
 
     def table(self, name: str) -> Table:
         try:
-            return self._evolve_partitioning(self.catalog.load_table(name))
+            return self._evolve_partitioning(self._reconcile_types(self.catalog.load_table(name)))
         except NoSuchTableError:
             c = self.contracts[name]
             self.catalog.create_namespace_if_not_exists(c.namespace)
@@ -81,6 +81,33 @@ class Lakehouse:
                     "gridlake.layer": c.layer,
                 },
             )
+
+    def _reconcile_types(self, table: Table) -> Table:
+        """Glue's Iceberg CREATE (Terraform) only knows zone-less ``timestamp``. While a
+        pre-created table is still empty, swap any column whose type differs from the contract
+        for one of the contract type, keeping column order. Nothing is rewritten: no data yet."""
+        name = ".".join(table.name()[-2:])
+        c = self.contracts.get(name)
+        if c is None or table.current_snapshot() is not None:
+            return table
+        want = {f.name: f.field_type for f in c.iceberg_schema().fields}
+        have = table.schema()
+        drift = [f.name for f in have.fields if f.name in want and f.field_type != want[f.name]]
+        if not drift:
+            return table
+        with table.update_schema() as update:
+            for col in drift:
+                update.rename_column(col, f"{col}__old")
+        table = self.catalog.load_table(name)
+        with table.update_schema() as update:
+            for col in drift:
+                update.add_column(col, want[col], doc=have.find_field(col).doc)
+                update.move_after(col, f"{col}__old")
+        table = self.catalog.load_table(name)
+        with table.update_schema() as update:
+            for col in drift:
+                update.delete_column(f"{col}__old")
+        return self.catalog.load_table(name)
 
     def _evolve_partitioning(self, table: Table) -> Table:
         """Apply the contract's partition spec to tables pre-created unpartitioned (e.g. by
