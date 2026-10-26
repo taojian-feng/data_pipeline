@@ -7,7 +7,10 @@ resource "aws_glue_catalog_database" "layer" {
 }
 
 resource "aws_glue_catalog_table" "contract" {
-  for_each      = local.contracts
+  for_each = local.contracts
+  # Iceberg CREATE writes metadata through Lake Formation credential vending.
+  depends_on = [aws_lakeformation_resource.warehouse]
+
   database_name = aws_glue_catalog_database.layer[split(".", each.key)[0]].name
   name          = split(".", each.key)[1]
   description   = trimspace(lookup(each.value, "description", ""))

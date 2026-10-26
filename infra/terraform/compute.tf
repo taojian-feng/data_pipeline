@@ -50,7 +50,7 @@ resource "aws_lambda_function" "stream" {
   image_uri                      = coalesce(var.lambda_image_uri, "${aws_ecr_repository.pipeline.repository_url}:${var.artifact_version}")
   timeout                        = 120
   memory_size                    = 1769
-  reserved_concurrent_executions = 8
+  reserved_concurrent_executions = var.stream_reserved_concurrency
   image_config {
     command = ["gridlake.aws_lambda.kinesis_handler"]
   }

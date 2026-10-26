@@ -28,6 +28,23 @@ locals {
   }) }
 }
 
+locals {
+  # Only include the Bedrock sync state when a knowledge base is configured.
+  kb_sync_state = var.bedrock_knowledge_base_id == "" ? {} : {
+    SyncKnowledgeBase = {
+      Type     = "Task"
+      Resource = "arn:${data.aws_partition.current.partition}:states:::aws-sdk:bedrockagent:startIngestionJob"
+      Parameters = {
+        KnowledgeBaseId = var.bedrock_knowledge_base_id
+        DataSourceId    = var.bedrock_data_source_id
+      }
+      ResultPath = null
+      Catch      = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.error", Next = "NotifyFailure" }]
+      Next       = "Done"
+    }
+  }
+}
+
 resource "aws_sfn_state_machine" "pipeline" {
   name     = "${local.name}-pipeline"
   role_arn = aws_iam_role.states.arn
@@ -46,7 +63,7 @@ resource "aws_sfn_state_machine" "pipeline" {
   definition = jsonencode({
     Comment = "gridlake medallion pipeline"
     StartAt = "SeedDimensions"
-    States = {
+    States = merge(local.kb_sync_state, {
       SeedDimensions = merge(local.step["seed"], { Next = "IngestEIA" })
       IngestEIA      = merge(local.step["ingest_eia"], { Next = "Backfill?" })
       "Backfill?" = {
@@ -65,17 +82,6 @@ resource "aws_sfn_state_machine" "pipeline" {
       Silver    = merge(local.step["silver"], { Next = "Gold" })
       Gold      = merge(local.step["gold"], { Next = "Knowledge" })
       Knowledge = merge(local.step["knowledge"], { Next = var.bedrock_knowledge_base_id == "" ? "Done" : "SyncKnowledgeBase" })
-      SyncKnowledgeBase = {
-        Type     = "Task"
-        Resource = "arn:${data.aws_partition.current.partition}:states:::aws-sdk:bedrockagent:startIngestionJob"
-        Parameters = {
-          KnowledgeBaseId = var.bedrock_knowledge_base_id
-          DataSourceId    = var.bedrock_data_source_id
-        }
-        ResultPath = null
-        Catch      = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.error", Next = "NotifyFailure" }]
-        Next       = "Done"
-      }
       NotifyFailure = {
         Type     = "Task"
         Resource = "arn:${data.aws_partition.current.partition}:states:::sns:publish"
@@ -87,7 +93,7 @@ resource "aws_sfn_state_machine" "pipeline" {
       }
       Failed = { Type = "Fail", Error = "PipelineFailed" }
       Done   = { Type = "Succeed" }
-    }
+    })
   })
 }
 

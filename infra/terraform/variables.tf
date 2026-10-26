@@ -59,6 +59,12 @@ variable "lakeformation_admin_arns" {
   default     = []
 }
 
+variable "stream_reserved_concurrency" {
+  description = "Reserved concurrency for the telemetry consumer (-1 = unreserved; new accounts only have 10 in total)."
+  type        = number
+  default     = -1
+}
+
 variable "alarm_email" {
   type    = string
   default = ""

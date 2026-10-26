@@ -13,18 +13,21 @@ resource "aws_lakeformation_data_lake_settings" "this" {
 }
 
 resource "aws_lakeformation_resource" "warehouse" {
-  arn      = aws_s3_bucket.this["warehouse"].arn
-  role_arn = aws_iam_role.lakeformation_access.arn
+  arn        = aws_s3_bucket.this["warehouse"].arn
+  role_arn   = aws_iam_role.lakeformation_access.arn
+  depends_on = [aws_lakeformation_data_lake_settings.this, aws_iam_role_policy.lakeformation_access]
 }
 
 resource "aws_lakeformation_lf_tag" "classification" {
-  key    = "classification"
-  values = ["public", "internal", "confidential"]
+  depends_on = [aws_lakeformation_data_lake_settings.this]
+  key        = "classification"
+  values     = ["public", "internal", "confidential"]
 }
 
 resource "aws_lakeformation_lf_tag" "layer" {
-  key    = "layer"
-  values = ["bronze", "silver", "gold", "ops"]
+  depends_on = [aws_lakeformation_data_lake_settings.this]
+  key        = "layer"
+  values     = ["bronze", "silver", "gold", "ops"]
 }
 
 resource "aws_lakeformation_resource_lf_tags" "table" {
