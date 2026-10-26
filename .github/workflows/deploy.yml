@@ -8,6 +8,9 @@ on:
         description: Apply the plan after approval (otherwise plan only)
         type: boolean
         default: false
+      region:
+        description: AWS region (must be where the bootstrap stack and state bucket live)
+        default: us-east-2
 
 permissions:
   contents: read
@@ -21,7 +24,7 @@ jobs:
       run:
         working-directory: infra/terraform
     env:
-      AWS_REGION: us-east-1
+      AWS_REGION: ${{ inputs.region }}
     steps:
       - uses: actions/checkout@v4
       - name: Show OIDC claims AWS will check (the token itself is not printed)
@@ -32,7 +35,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ inputs.region }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
@@ -40,7 +43,7 @@ jobs:
           terraform init -input=false
           -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
           -backend-config="key=gridlake/dev.tfstate"
-          -backend-config="region=us-east-1"
-      - run: terraform plan -input=false -var environment=dev -out=tfplan
+          -backend-config="region=${{ inputs.region }}"
+      - run: terraform plan -input=false -var environment=dev -var region=${{ inputs.region }} -out=tfplan
       - if: inputs.apply
         run: terraform apply -input=false tfplan
