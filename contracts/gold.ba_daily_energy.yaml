@@ -1,12 +1,12 @@
 name: gold.ba_daily_energy
-version: 1.0.0
+version: 1.1.0
 layer: gold
 domain: grid-operations
 owner: grid-analytics@gridlake.example
 classification: public
 description: >
-  Data product: daily energy, peak, forecast accuracy, renewable share and carbon intensity
-  per balancing authority. Consumers: BI dashboards, sustainability reporting, RAG knowledge base.
+  Data product: daily energy, peak, forecast accuracy, net interchange, renewable share and
+  carbon intensity per balancing authority. Consumers: BI dashboards, sustainability reporting, RAG knowledge base.
 primary_key: [date, ba_code]
 partition_by:
   - {column: date, transform: identity}
@@ -22,6 +22,7 @@ columns:
   - {name: peak_hour_utc, type: int, nullable: false}
   - {name: forecast_mape_pct, type: double, description: Mean absolute percentage error of the day-ahead forecast, business_term: Forecast Accuracy}
   - {name: net_generation_mwh, type: double}
+  - {name: net_interchange_mwh, type: double, description: Sum of hourly total interchange (positive = net export; added in 1.1.0), business_term: Interchange}
   - {name: renewable_share_pct, type: double, description: Solar + wind + hydro as % of positive generation, business_term: Renewable Share}
   - {name: carbon_intensity_kg_per_mwh, type: double, description: Generation-weighted CO2 intensity, business_term: Carbon Intensity}
   - {name: total_emissions_t, type: double, business_term: Emissions}

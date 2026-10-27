@@ -1,4 +1,4 @@
-.PHONY: install lint format test run demo ask incident-demo quality lineage docker tf-validate clean
+.PHONY: install lint format test run demo ask incident-demo watch-demo quality lineage docker tf-validate clean
 
 PY ?= python3
 VENV ?= .venv
@@ -35,6 +35,10 @@ incident-demo:      ## inject a source fault (FAULT=new_fuel_type|unit_change|fe
 	-$(BIN)/gridlake run --days 14 --inject-fault $(or $(FAULT),new_fuel_type)
 	$(BIN)/gridlake triage --trace
 	$(BIN)/gridlake incidents list
+
+watch-demo:         ## plant a heatwave, a wind lull and a hydro shortfall, then write the grid brief
+	$(BIN)/gridlake run --days 14 --grid-events
+	$(BIN)/gridlake watch --trace
 
 docker:
 	docker build -t gridlake:local .

@@ -321,13 +321,14 @@ def test_contract_fixes_must_bump_the_version_and_never_loosen_gold(baseline_box
     )
     gold = (REPO / "contracts/gold.ba_daily_energy.yaml").read_text()
     rule_line = next(line for line in gold.splitlines() if "rule: range" in line)
+    version = next(line for line in gold.splitlines() if line.startswith("version:")).split()[1]
     r = box.call(
         "draft_fix",
         {
             "path": "contracts/gold.ba_daily_energy.yaml",
             "edits": [
                 {"old": rule_line, "new": rule_line.replace("severity: error", "severity: warn")},
-                bump,
+                {"old": f"version: {version}\n", "new": "version: 9.0.0\n"},
             ],
             "title": "t",
             "rationale": "r",

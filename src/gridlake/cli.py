@@ -26,13 +26,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     start = _day(args.start) if args.start else end - timedelta(days=args.days)
     settings = Settings()
     source = None
-    if args.inject_fault:
-        from gridlake.reliability.faults import FaultySource
+    if args.inject_fault or args.grid_events:
         from gridlake.sources.eia import SyntheticEIASource, load_balancing_authorities
 
-        source = FaultySource(
-            SyntheticEIASource(load_balancing_authorities(settings.seeds_dir)), args.inject_fault
-        )
+        source = SyntheticEIASource(load_balancing_authorities(settings.seeds_dir))
+    if args.grid_events:
+        from gridlake.watcher.scenarios import GridEventSource
+
+        source = GridEventSource(source)
+    if args.inject_fault:
+        from gridlake.reliability.faults import FaultySource
+
+        source = FaultySource(source, args.inject_fault)
     pipeline = Pipeline(settings, source=source)
     try:
         summary = pipeline.run(
@@ -205,6 +210,39 @@ def cmd_incidents(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    from gridlake.watcher import BriefStore, announce, watch
+
+    settings = Settings()
+    brief = watch(
+        settings,
+        day=_day(args.date).date() if args.date else None,
+        llm=args.llm,
+        clearance=args.clearance,
+        lookback=args.lookback,
+        z_min=args.z,
+    )
+    location = (
+        None
+        if args.no_save
+        else BriefStore(settings.briefs_dir, settings.briefs_s3_uri).save(brief)
+    )
+    if args.announce and location:
+        announce(settings, brief, location)
+    if args.json:
+        print(json.dumps(brief.to_dict(), indent=2, default=str))
+        return 0
+    if args.trace:
+        for step in brief.steps:
+            status = "ok" if step.ok else f"error: {step.error}"
+            print(f"> {step.tool}({json.dumps(step.input)[:160]}) -> {status}")
+        print()
+    print(brief.markdown())
+    if location:
+        print(f"saved: {location}")
+    return 0
+
+
 def cmd_lineage(args: argparse.Namespace) -> int:
     from gridlake import lineage as ol
 
@@ -255,6 +293,11 @@ def main(argv: list[str] | None = None) -> int:
         "--inject-fault",
         choices=["new_fuel_type", "unit_change", "feed_outage"],
         help="demo: inject a realistic source fault for `gridlake triage` to diagnose",
+    )
+    run.add_argument(
+        "--grid-events",
+        action="store_true",
+        help="demo: plant a heatwave, a wind lull and a hydro shortfall on the last day",
     )
     run.set_defaults(func=cmd_run)
 
@@ -342,6 +385,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     incidents.add_argument("--repo-root", default=".")
     incidents.set_defaults(func=cmd_incidents)
+
+    watch_ = sub.add_parser(
+        "watch", help="grid anomaly watcher: flag and explain unusual days, write the daily brief"
+    )
+    watch_.add_argument("--date", help="UTC day YYYY-MM-DD (default: latest complete day)")
+    watch_.add_argument("--lookback", type=int, default=28, help="days of history to compare")
+    watch_.add_argument("--z", type=float, default=3.5, help="robust z-score to flag")
+    watch_.add_argument(
+        "--clearance", choices=["public", "internal", "confidential"], default="public"
+    )
+    watch_.add_argument("--llm", choices=["offline", "bedrock"])
+    watch_.add_argument("--trace", action="store_true", help="print each tool call")
+    watch_.add_argument("--json", action="store_true")
+    watch_.add_argument("--no-save", action="store_true", help="do not write the brief files")
+    watch_.add_argument(
+        "--announce", action="store_true", help="also post it to GRIDLAKE_BRIEF_TOPIC_ARN"
+    )
+    watch_.set_defaults(func=cmd_watch)
 
     sub.add_parser("lineage", help="print dataset lineage edges").set_defaults(func=cmd_lineage)
     quality = sub.add_parser("quality", help="data-quality report")

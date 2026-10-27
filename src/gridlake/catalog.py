@@ -66,7 +66,8 @@ class Lakehouse:
 
     def table(self, name: str) -> Table:
         try:
-            return self._evolve_partitioning(self._reconcile_types(self.catalog.load_table(name)))
+            table = self._reconcile_types(self.catalog.load_table(name))
+            return self._evolve_partitioning(self._add_new_columns(table))
         except NoSuchTableError:
             c = self.contracts[name]
             self.catalog.create_namespace_if_not_exists(c.namespace)
@@ -124,6 +125,32 @@ class Lakehouse:
                     for col in drift:
                         update.delete_column(f"{col}{OLD}")
         return self.catalog.load_table(name)
+
+    def _add_new_columns(self, table: Table) -> Table:
+        """Additive schema evolution: a contract minor version may add optional columns, and
+        tables created before it (locally, or by Terraform, which leaves the schema to Iceberg
+        after CREATE) gain them in contract order. Metadata-only; old rows read as null."""
+        c = self.contracts.get(".".join(table.name()[-2:]))
+        have = {f.name for f in table.schema().fields}
+        new = [col for col in c.columns if col.name not in have] if c else []
+        if not new:
+            return table
+        if any(not col.nullable for col in new):
+            raise ValueError(f"{c.name}: columns added to an existing table must be nullable")
+        names = c.column_names
+        with table.update_schema() as update:
+            for col in new:
+                update.add_column(
+                    col.name,
+                    c.iceberg_schema().find_field(col.name).field_type,
+                    doc=col.description or None,
+                )
+                before = names[names.index(col.name) - 1] if names.index(col.name) else None
+                if before is None:
+                    update.move_first(col.name)
+                else:
+                    update.move_after(col.name, before)
+        return self.catalog.load_table(c.name)
 
     def _evolve_partitioning(self, table: Table) -> Table:
         """Apply the contract's partition spec to tables pre-created unpartitioned (e.g. by
