@@ -108,3 +108,29 @@ variable "analyst_agent_max_clearance" {
     error_message = "analyst_agent_max_clearance must be public, internal or confidential."
   }
 }
+
+variable "enable_reliability_agent" {
+  description = "Triage every finished pipeline execution with the data reliability agent (EventBridge -> Lambda); drafts land in S3 for a person to approve."
+  type        = bool
+  default     = false
+}
+
+variable "reliability_agent_llm" {
+  description = "Model driving the reliability agent: offline (deterministic planner, no Bedrock) or bedrock (Claude, using analyst_agent_model)."
+  type        = string
+  default     = "offline"
+  validation {
+    condition     = contains(["offline", "bedrock"], var.reliability_agent_llm)
+    error_message = "reliability_agent_llm must be offline or bedrock."
+  }
+}
+
+variable "reliability_agent_clearance" {
+  description = "Highest classification the reliability agent may read rows of (quarantined rows count as their table's classification)."
+  type        = string
+  default     = "internal"
+  validation {
+    condition     = contains(["public", "internal", "confidential"], var.reliability_agent_clearance)
+    error_message = "reliability_agent_clearance must be public, internal or confidential."
+  }
+}

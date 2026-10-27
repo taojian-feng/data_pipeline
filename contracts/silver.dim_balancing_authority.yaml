@@ -5,6 +5,7 @@ domain: grid-operations
 owner: grid-analytics@gridlake.example
 classification: public
 description: Conformed balancing-authority dimension with region and interconnection hierarchy.
+source: seeds/balancing_authorities.csv (reference data, changed by pull request)
 primary_key: [ba_code]
 columns:
   - {name: ba_code, type: string, nullable: false, description: EIA balancing authority code, business_term: Balancing Authority}

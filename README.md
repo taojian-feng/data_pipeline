@@ -8,8 +8,10 @@
 A production-grade data pipeline that turns raw US power-grid data (EIA-930 hourly operations
 and streaming substation telemetry) into governed data products for BI, ML and AI agents.
 It covers ingestion, an Iceberg medallion lakehouse, contract-driven quality gates, OpenLineage
-lineage, a knowledge layer (ontology, knowledge graph, access-aware RAG retrieval), and a
-**grid analyst agent** that answers questions by choosing its own tools and cites the tables it used.
+lineage, a knowledge layer (ontology, knowledge graph, access-aware RAG retrieval), a
+**grid analyst agent** that answers questions by choosing its own tools and cites the tables it used,
+and a **data reliability agent** that triages failed runs and quality spikes and drafts a fix or
+GitHub issue for a person to approve.
 
 **It runs end to end on a laptop in about 10 seconds with no cloud account**, and the same code
 deploys to AWS (S3 Tables / Glue Data Catalog, Lake Formation, Kinesis, Lambda, Glue Spark,
@@ -37,6 +39,7 @@ make install && make demo        # or: pip install -e ".[dev]" && gridlake run
 | **Ontology + knowledge graph** joining grid topology with the data estate (datasets, columns, glossary, owners, lineage); OWL / Turtle / N-Triples for Neptune | [`knowledge/ontology.yaml`](src/gridlake/knowledge/ontology.yaml), [`knowledge/graph.py`](src/gridlake/knowledge/graph.py) |
 | **RAG for agents**: clearance-filtered retrieval, metadata filters, GraphRAG context packs, Bedrock KB export | [`knowledge/retrieval.py`](src/gridlake/knowledge/retrieval.py), [`knowledge/context.py`](src/gridlake/knowledge/context.py), [ADR 0005](docs/adr/0005-ontology-guardrails-and-access-aware-retrieval.md) |
 | **Grid analyst agent**: the model picks tools (SQL on gold, knowledge graph, document search, catalog) and cites tables; caller clearance is bound outside the model and enforced in every tool, then again by Lake Formation; runs offline or on Claude via Amazon Bedrock, or as a Bedrock Agent | [`agent/`](src/gridlake/agent), [`agent.tf`](infra/terraform/agent.tf), [ADR 0005](docs/adr/0005-ontology-guardrails-and-access-aware-retrieval.md) |
+| **Data reliability agent**: when a run fails or a quality rule spikes, it reads the run log, quality history, rejected rows, lineage and contract, records a diagnosis with evidence, and drafts a contract/seed patch or a GitHub issue. Drafts change nothing until a person approves them; fixes are confined to contracts and seeds, must validate, and never loosen a gold rule | [`reliability/`](src/gridlake/reliability), [`reliability.tf`](infra/terraform/reliability.tf), [ADR 0006](docs/adr/0006-agents-draft-people-approve.md) |
 | **Least-privilege governance**: Lake Formation tag-based access control generated from contracts, KMS, TLS-only buckets | [`governance.tf`](infra/terraform/governance.tf), [`iam.tf`](infra/terraform/iam.tf) |
 | **Operations**: Step Functions with retries and alerts, DLQ, iterator-age alarms, nightly Iceberg maintenance, runbook | [`orchestration.tf`](infra/terraform/orchestration.tf), [`monitoring.tf`](infra/terraform/monitoring.tf), [runbook](docs/runbook.md) |
 | **Validating AI-assisted code** in a regulated setting | [docs/ai-assisted-delivery.md](docs/ai-assisted-delivery.md) |
@@ -88,6 +91,7 @@ gridlake quality                  # rule outcomes and quarantined rows
 gridlake lineage                  # dataset lineage from OpenLineage events
 gridlake sql "SELECT * FROM gold_ba_daily_energy ORDER BY date DESC LIMIT 5"
 gridlake ask "What was the renewable share for CAISO on 2026-10-20?" --trace   # grid analyst agent
+gridlake run --inject-fault new_fuel_type && gridlake triage --trace           # data reliability agent
 pytest                            # 40+ tests including end-to-end idempotency and failure paths
 ```
 
@@ -180,6 +184,64 @@ lake, and `GRIDLAKE_BEDROCK_KB_ID` to search the Bedrock Knowledge Base.
 `gridlake ask --context-only` still prints the GraphRAG context pack (linked entities, graph
 facts and clearance-filtered passages) for use in another model's prompt.
 
+### Data reliability agent
+
+`gridlake triage` looks at a run (the latest by default). Every failed step is an incident, and so
+is any error rule that rejected at least 2% (and 5) of a table's rows: the synthetic feed's
+background defect rate stays below that. For each incident the agent investigates with read-only
+tools, records a diagnosis (category, cause, evidence, confidence, owner) and drafts one
+remediation. `gridlake run --inject-fault` reproduces three realistic failures:
+
+| Fault | What the agent finds | Draft |
+|---|---|---|
+| `new_fuel_type`: EIA starts reporting battery storage (`BAT`) | `reference_data_gap`: valid rows rejected by the `fuel_type` referential rule; `BAT` is an EIA code missing from `seeds/fuel_types.csv` | **fix**: a seed patch, checked against the dimension's own rules |
+| `unit_change`: ERCO demand arrives in kWh | `source_data_defect`: rejected ERCO demand is x1,030 its accepted history; the rule is right | **issue** to the bronze source owner, with the downstream impact |
+| `feed_outage`: the EIA API returns 503 until retries run out | `upstream_outage`: ingest failed, nothing later ran; landing is idempotent | **issue** with the safe re-run |
+
+```text
+$ gridlake run --inject-fault new_fuel_type && gridlake triage --trace
+== inc-35876a0a-1: silver.generation_hourly: referential(fuel_type->silver.dim_fuel_type.fuel_type) rejected 672 of 16800 rows (4.0%)
+> get_run_log({}) -> ok
+> get_quality_results({"table": "silver.generation_hourly"}) -> ok
+> get_lineage({"table": "silver.generation_hourly"}) -> ok
+> get_contract({"table": "silver.generation_hourly"}) -> ok
+> inspect_quarantine({"table": "silver.generation_hourly", "rule": "referential(fuel_type->...)", "limit": 3}) -> ok
+> get_contract({"table": "silver.dim_fuel_type"}) -> ok
+> read_repo_file({"path": "seeds/fuel_types.csv"}) -> ok
+> record_diagnosis({"category": "reference_data_gap", ...}) -> ok
+> draft_fix({"path": "seeds/fuel_types.csv", "edits": [...]}) -> ok
+reference_data_gap (high confidence): EIA now reports energy source BAT, which silver.dim_fuel_type does not
+list yet, so those rows are quarantined. The data is valid; the reference seed is behind.
+  draft inc-35876a0a-1-d1 [fix] Register EIA energy source(s) BAT in seeds/fuel_types.csv
+
+$ gridlake incidents show inc-35876a0a-1-d1        # the rationale, evidence and the diff
+$ gridlake incidents approve inc-35876a0a-1-d1 --apply   # a person decides; git apply to the working tree
+$ gridlake run && gridlake replay silver.generation_hourly   # reload the seed, publish the rejected rows
+COMPLETE  replay_generation_hourly       {"replayed": 781, "rows": 672, "still_failing": 109}
+COMPLETE  gold_fuel_mix_daily            {"rows": 700, "quarantined": 0}
+```
+
+**The agent drafts, a person approves** ([ADR 0006](docs/adr/0006-agents-draft-people-approve.md)).
+Drafts are pending files (`.gridlake/incidents/`, or S3 on AWS). `gridlake incidents approve`
+files an issue through the GitHub API when `GITHUB_TOKEN` and `GRIDLAKE_GITHUB_REPO` are set
+(else exports Markdown for `gh issue create`), or writes a fix as a patch (`--apply` runs
+`git apply` for the usual pull-request review). `reject --reason` records the decision.
+
+| Guardrail | Where |
+|---|---|
+| Fixes may only touch `contracts/*.yaml` and `seeds/*.csv` | `draft_fix` refuses any other path |
+| A changed contract must still parse and bump its version; gold quality rules are never changed | `_validate_contract` |
+| A seed change must pass its dimension's own contract rules (unique keys, ranges) | `_validate_seed` |
+| Nothing is drafted before a diagnosis with evidence is recorded; at most three drafts per incident | `record_diagnosis`, `MAX_DRAFTS` |
+| Rejected rows are as sensitive as the table they were meant for | `inspect_quarantine` checks the caller's clearance against that table |
+
+It runs on the same tool loop as the grid analyst (`gridlake.agent.core.run_loop`) with the
+deterministic `OfflineResponder` by default, or Claude with `--llm bedrock`. On AWS
+(`-var enable_reliability_agent=true`) an EventBridge rule sends every finished Step Functions
+execution to a Lambda that reads the execution history, scopes quality results to the
+execution's time window, writes drafts to `s3://<artifacts>/incidents/` and posts a summary to
+the alerts topic.
+
 ## Guarantees backed by tests
 
 | Guarantee | Test |
@@ -197,6 +259,9 @@ facts and clearance-filtered passages) for use in another model's prompt.
 | The agent's SQL tool refuses writes, file reads and tables above clearance | `test_only_single_selects_over_governed_tables`, `test_run_sql_enforces_clearance_before_querying` |
 | The model cannot raise its own clearance; Bedrock Agents take it from the session | `test_model_cannot_pass_its_own_clearance`, `test_action_group_takes_clearance_from_the_session` |
 | Bedrock KB retrieval is filtered by classification server-side and checked again | `test_bedrock_retrieve_filters_by_classification_server_and_client_side` |
+| The reliability agent tells a source defect from a stale seed, and an outage from both | `test_unit_change_is_a_source_defect_and_never_a_contract_change`, `test_new_fuel_type_fix_applies_and_replay_restores_the_rows`, `test_feed_outage_is_an_upstream_outage` |
+| Agent fixes stay in contracts and seeds, bump versions, never loosen gold, and pass the dimension's rules | `test_fixes_are_confined_to_contracts_and_seeds`, `test_contract_fixes_must_bump_the_version_and_never_loosen_gold`, `test_seed_fixes_must_pass_the_dimension_rules` |
+| Nothing is filed or applied until a person approves | `test_new_fuel_type_fix_applies_and_replay_restores_the_rows`, `test_approving_an_issue_files_it_on_github` |
 
 ## Deploying to AWS
 
@@ -223,6 +288,13 @@ instructions and action-group functions come from the repo (`src/gridlake/agent/
 passes the user's clearance as `sessionState.sessionAttributes.clearance` on `InvokeAgent`. Set
 `analyst_agent_model` to a model or inference profile enabled for Bedrock Agents in your account.
 
+Data reliability agent (off by default): `-var enable_reliability_agent=true` adds the
+EventBridge rule, the Lambda (`gridlake.reliability.aws.handler`), a read-only role (execution
+history, quality tables, lake reads up to `reliability_agent_clearance`, drafts under
+`incidents/`, publish to the alerts topic) and the `reliability_incidents_uri` output. It runs the
+offline responder unless `reliability_agent_llm=bedrock`. Review drafts from a laptop with
+`GRIDLAKE_INCIDENTS_S3_URI=<that uri> gridlake incidents list`.
+
 Runtime switches: `GRIDLAKE_CATALOG=glue` with `GRIDLAKE_WAREHOUSE=s3://...`, or
 `GRIDLAKE_CATALOG=s3tables` with `GRIDLAKE_S3_TABLES_ARN=arn:aws:s3tables:...`.
 
@@ -238,6 +310,7 @@ src/gridlake/
   quality/            contract-driven quality engine
   knowledge/          ontology, knowledge graph, retrieval index, GraphRAG context packs
   agent/              grid analyst: agent loop, access-aware tools, Bedrock / offline models, Bedrock Agents action group
+  reliability/        data reliability agent: incident detection, triage tools, drafts and approval, fault injection
   catalog.py          Iceberg catalogs (local / Glue / S3 Tables) and contract-bound tables
   pipeline.py         orchestration, lineage, quality gates, run manifests
   aws_lambda.py       Kinesis consumer and Step Functions task handlers
@@ -253,8 +326,8 @@ tests/                unit and end-to-end tests
 * The local engine is single-process; the Glue Spark job is the scale-out path for backfills.
 * The hashed TF-IDF embedder is a deterministic offline stand-in for Titan embeddings
   (`BedrockEmbedder`), and the in-memory graph is a stand-in for Amazon Neptune.
-* The offline planner is a scripted stand-in so the agent runs anywhere; open-ended questions
-  need `--llm bedrock`. The Bedrock and Athena paths are covered by tests with stubbed AWS clients.
+* The offline planner and responder are scripted stand-ins so the agents run anywhere; open-ended
+  questions and incidents outside their decision tables need `--llm bedrock`. The Bedrock and Athena paths are covered by tests with stubbed AWS clients.
 * The Terraform passes `terraform validate` in CI; applying it needs your own AWS account and
   an image pushed to the ECR repository it creates.
 

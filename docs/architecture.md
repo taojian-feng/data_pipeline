@@ -12,6 +12,7 @@ Downstream consumers want very different things from the same raw data:
 | ML (SageMaker) demand forecasting | leakage-free hourly features | `gold.demand_forecast_features` |
 | Reliability engineering | frequency excursions (confidential) | `gold.grid_reliability_daily` |
 | AI agents / RAG assistants | vocabulary, relationships, citeable facts, access control | ontology + knowledge graph + vector index, grid analyst agent (`src/gridlake/agent`) |
+| Data platform on-call | why a run failed or rows were rejected, and what to change | data reliability agent (`src/gridlake/reliability`): diagnosis plus a drafted fix or issue to approve |
 
 ## Logical flow
 
@@ -93,6 +94,7 @@ flowchart TB
 | Lineage | OpenLineage JSONL | OpenLineage HTTP (Marquez, DataZone / SageMaker Catalog) |
 | Knowledge base | Hashed TF-IDF index | Amazon Bedrock Knowledge Base (S3 data source + metadata filters) |
 | Grid analyst agent | `gridlake ask`: offline planner (or Claude on Bedrock), DuckDB SQL tool | Bedrock Agent + tools Lambda, Athena workgroup, Bedrock KB `Retrieve` with a classification filter |
+| Data reliability agent | `gridlake triage`: run manifests + OpenLineage events, drafts in `.gridlake/incidents` | EventBridge on Step Functions status changes → Lambda; execution history, published graph, drafts in S3, summary on SNS |
 
 Switching is configuration only: `GRIDLAKE_CATALOG=glue|s3tables`, `GRIDLAKE_WAREHOUSE`, `GRIDLAKE_S3_TABLES_ARN`.
 
