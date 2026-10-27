@@ -486,6 +486,8 @@ class Pipeline:
             kb_docs = rag.export_bedrock_kb(docs, out_dir / "bedrock_kb")
             if self.settings.kb_s3_uri:
                 rag.upload_to_s3(out_dir / "bedrock_kb", self.settings.kb_s3_uri)
+            if self.settings.graph_s3_uri:  # read by the grid analyst's lookup_entity tool
+                rag.upload_file_to_s3(out_dir / "graph.nt", self.settings.graph_s3_uri)
             return {"graph": graph.stats(), "documents": len(docs), "bedrock_kb_files": kb_docs * 2}
 
         inputs = [

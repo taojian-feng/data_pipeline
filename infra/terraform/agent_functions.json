@@ -1,0 +1,71 @@
+[
+  {
+    "name": "list_tables",
+    "description": "List the governed tables you may query, with layer, grain, description and columns. Call this before writing SQL if you are unsure of a column name. Gold tables are the data products to prefer for answers.",
+    "parameters": {}
+  },
+  {
+    "name": "run_sql",
+    "description": "Run one read-only SELECT over the governed tables and return up to 50 rows. Name tables as namespace.table, e.g. gold.ba_daily_energy. Use portable SQL that works on both DuckDB and Athena: DATE 'YYYY-MM-DD' literals, round(), avg(), GROUP BY, ORDER BY, LIMIT. Tables above the caller's clearance are refused.",
+    "parameters": {
+      "sql": {
+        "type": "string",
+        "description": "A single SELECT statement",
+        "required": true
+      }
+    }
+  },
+  {
+    "name": "describe_table",
+    "description": "Catalog entry for one table: owner, classification, primary key, quality rules, upstream lineage and consumers. Use it to say which governed table backs a number and who owns it.",
+    "parameters": {
+      "table": {
+        "type": "string",
+        "description": "e.g. gold.fuel_mix_daily",
+        "required": true
+      }
+    }
+  },
+  {
+    "name": "lookup_entity",
+    "description": "Resolve names in free text (balancing authorities and their aliases such as 'California ISO' or 'ERCOT', regions, interconnections, energy sources, business terms) to knowledge-graph entities, with codes and facts such as generation mix.",
+    "parameters": {
+      "text": {
+        "type": "string",
+        "description": "Text naming entities",
+        "required": true
+      }
+    }
+  },
+  {
+    "name": "search_documents",
+    "description": "Semantic search over knowledge-base passages: daily facts per balancing authority, cross-BA rankings, reliability summaries and table catalog entries. Optional exact-match filters narrow the search.",
+    "parameters": {
+      "query": {
+        "type": "string",
+        "description": "query",
+        "required": true
+      },
+      "ba_code": {
+        "type": "string",
+        "description": "e.g. CISO",
+        "required": false
+      },
+      "date": {
+        "type": "string",
+        "description": "YYYY-MM-DD",
+        "required": false
+      },
+      "doc_type": {
+        "type": "string",
+        "description": "one of fact, catalog",
+        "required": false
+      },
+      "k": {
+        "type": "integer",
+        "description": "number of passages, 1-8",
+        "required": false
+      }
+    }
+  }
+]

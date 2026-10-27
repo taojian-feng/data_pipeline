@@ -76,20 +76,39 @@ def cmd_sql(args: argparse.Namespace) -> int:
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
-    from gridlake.knowledge.context import build_context
-    from gridlake.knowledge.retrieval import VectorIndex
-    from gridlake.pipeline import Pipeline
-
     settings = Settings()
-    index = VectorIndex.load(settings.knowledge_dir / "index")
-    pack = build_context(
-        Pipeline(settings).knowledge_graph(),
-        index,
-        args.question,
-        clearance=args.clearance,
-        k=args.k,
+    if args.context_only:
+        from gridlake.knowledge.context import build_context
+        from gridlake.knowledge.retrieval import VectorIndex
+        from gridlake.pipeline import Pipeline
+
+        index = VectorIndex.load(settings.knowledge_dir / "index")
+        pack = build_context(
+            Pipeline(settings).knowledge_graph(),
+            index,
+            args.question,
+            clearance=args.clearance,
+            k=args.k,
+        )
+        print(json.dumps(pack.__dict__, indent=2, default=str) if args.json else pack.to_prompt())
+        return 0
+
+    from gridlake.agent import build_analyst
+
+    answer = build_analyst(settings, args.clearance, llm=args.llm).ask(args.question)
+    if args.json:
+        print(json.dumps(answer.to_dict(), indent=2, default=str))
+        return 0
+    if args.trace:
+        for step in answer.steps:
+            status = "ok" if step.ok else f"error: {step.error}"
+            print(f"> {step.tool}({json.dumps(step.input)}) -> {status}")
+        print()
+    print(answer.text)
+    print(f"\nsources: tables={', '.join(answer.tables) or 'none'}", end="")
+    print(
+        f"; documents={', '.join(answer.documents) or 'none'}  [{answer.model}, clearance={answer.clearance}]"
     )
-    print(json.dumps(pack.__dict__, indent=2, default=str) if args.json else pack.to_prompt())
     return 0
 
 
@@ -164,12 +183,23 @@ def main(argv: list[str] | None = None) -> int:
     sql.add_argument("query")
     sql.set_defaults(func=cmd_sql)
 
-    ask = sub.add_parser("ask", help="build a grounded GraphRAG context pack for a question")
+    ask = sub.add_parser("ask", help="ask the grid analyst agent a question (cites its tables)")
     ask.add_argument("question")
     ask.add_argument(
         "--clearance", choices=["public", "internal", "confidential"], default="public"
     )
-    ask.add_argument("-k", type=int, default=4)
+    ask.add_argument(
+        "--llm",
+        choices=["offline", "bedrock"],
+        help="model driving the agent (default: GRIDLAKE_AGENT_LLM, else offline)",
+    )
+    ask.add_argument("--trace", action="store_true", help="print each tool call")
+    ask.add_argument(
+        "--context-only",
+        action="store_true",
+        help="print the GraphRAG context pack instead of running the agent",
+    )
+    ask.add_argument("-k", type=int, default=4, help="passages in the context pack")
     ask.add_argument("--json", action="store_true")
     ask.set_defaults(func=cmd_ask)
 

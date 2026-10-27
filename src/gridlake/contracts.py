@@ -35,6 +35,19 @@ from pyiceberg.types import (
 
 CLASSIFICATIONS = ("public", "internal", "confidential")
 
+
+def cleared(classification: str | None, clearance: str) -> bool:
+    """Clearance is hierarchical: confidential > internal > public. Unknown means confidential."""
+    level = CLASSIFICATIONS.index(classification) if classification in CLASSIFICATIONS else 2
+    return level <= CLASSIFICATIONS.index(clearance)
+
+
+def metadata_classification(classification: str) -> str:
+    """Metadata about a table (owner, lineage, rules) is less sensitive than its rows, but
+    never more open than internal."""
+    return "internal" if classification == "public" else classification
+
+
 _ICEBERG_TYPES: dict[str, type[IcebergType]] = {
     "string": StringType,
     "double": DoubleType,

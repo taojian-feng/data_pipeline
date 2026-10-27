@@ -35,7 +35,18 @@ class Settings:
     eia_api_key: str | None = field(default_factory=lambda: os.getenv("EIA_API_KEY"))
     eia_api_key_secret: str | None = field(default_factory=lambda: os.getenv("EIA_API_KEY_SECRET"))
     kb_s3_uri: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_KB_S3_URI"))
+    graph_s3_uri: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_GRAPH_S3_URI"))
     openlineage_url: str | None = field(default_factory=lambda: os.getenv("OPENLINEAGE_URL"))
+    # Grid analyst agent: offline planner and local DuckDB by default, Bedrock + Athena on AWS.
+    agent_llm: str = field(default_factory=lambda: os.getenv("GRIDLAKE_AGENT_LLM", "offline"))
+    agent_model: str = field(
+        default_factory=lambda: os.getenv("GRIDLAKE_AGENT_MODEL", "anthropic.claude-opus-5-5")
+    )
+    agent_sql: str = field(default_factory=lambda: os.getenv("GRIDLAKE_AGENT_SQL", "local"))
+    athena_workgroup: str | None = field(
+        default_factory=lambda: os.getenv("GRIDLAKE_ATHENA_WORKGROUP")
+    )
+    bedrock_kb_id: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_BEDROCK_KB_ID"))
     contracts_dir: Path = field(default_factory=lambda: _resource_dir("contracts", "_contracts"))
     seeds_dir: Path = field(default_factory=lambda: _resource_dir("seeds", "_seeds"))
 
