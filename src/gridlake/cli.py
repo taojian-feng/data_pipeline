@@ -235,6 +235,80 @@ def cmd_quality(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_propose(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from gridlake.selfservice import Request, design_product
+
+    request = Request(
+        args.request,
+        args.owner,
+        name=args.name,
+        consumers=args.consumer or [],
+        classification=args.classification,
+    )
+    design = design_product(
+        Settings(),
+        request,
+        clearance=args.clearance,
+        llm=args.llm,
+        repo_root=Path(args.repo_root).resolve(),
+    )
+    if args.json:
+        print(json.dumps(design.to_dict(), indent=2, default=str))
+        return 0
+    if args.trace:
+        for step in design.steps:
+            status = "ok" if step.ok else f"error: {step.error}"
+            print(f"> {step.tool}({json.dumps(step.input)[:160]}) -> {status}")
+        print()
+    print(design.summary)
+    for d in design.drafts:
+        print(f"  draft {d.id} [{d.kind}] {d.title}")
+    return 0 if design.drafts else 1
+
+
+def cmd_products(args: argparse.Namespace) -> int:
+    import getpass
+    import os
+    from pathlib import Path
+
+    from gridlake.reliability.drafts import reject
+    from gridlake.selfservice import proposal_store
+    from gridlake.selfservice.publish import GitHubPulls, approve, open_pull_request
+
+    settings = Settings()
+    store = proposal_store(settings)
+    if args.action == "list":
+        for d in store.list(None if args.all else "pending"):
+            print(f"{d.id:<36} {d.status:<9} {d.title}")
+        return 0
+    if not args.draft:
+        print("name a draft id", file=sys.stderr)
+        return 2
+    if args.action == "show":
+        draft = store.get(args.draft)
+        print(draft.body if args.body else draft.render())
+        return 0
+    who = args.by or os.getenv("GRIDLAKE_APPROVER") or getpass.getuser()
+    if args.action == "reject":
+        print(reject(store, args.draft, who, args.reason).render())
+        return 0
+    root = Path(args.repo_root).resolve()
+    if args.pr:
+        repo, token = settings.github_repo, os.getenv("GITHUB_TOKEN")
+        github = GitHubPulls(repo, token) if repo and token else None
+        draft = open_pull_request(
+            store, args.draft, who, root, args.base, args.remote, github, push=not args.no_push
+        )
+    else:
+        draft = approve(
+            store, args.draft, who, settings.proposals_dir / "approved", root, args.apply
+        )
+    print(f"{draft.id} approved by {draft.decided_by}: {draft.outcome}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gridlake", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -347,6 +421,47 @@ def main(argv: list[str] | None = None) -> int:
     quality = sub.add_parser("quality", help="data-quality report")
     quality.add_argument("--samples", type=int, default=5)
     quality.set_defaults(func=cmd_quality)
+
+    propose = sub.add_parser(
+        "propose",
+        help="self-service data product agent: describe a dataset, get a drafted contract, SQL and tests",
+    )
+    propose.add_argument("request", help="the dataset you need, in your own words")
+    propose.add_argument("--owner", required=True, help="team email that will own the product")
+    propose.add_argument("--name", help="table name, gold.<snake_case> (default: the agent picks)")
+    propose.add_argument("--consumer", action="append", help="who will use it (repeatable)")
+    propose.add_argument("--classification", choices=["public", "internal", "confidential"])
+    propose.add_argument(
+        "--clearance", choices=["public", "internal", "confidential"], default="internal"
+    )
+    propose.add_argument("--llm", choices=["offline", "bedrock"])
+    propose.add_argument(
+        "--repo-root", default=".", help="checkout the new files must not clash with"
+    )
+    propose.add_argument("--trace", action="store_true", help="print each tool call")
+    propose.add_argument("--json", action="store_true")
+    propose.set_defaults(func=cmd_propose)
+
+    products = sub.add_parser("products", help="review, approve or reject drafted data products")
+    products.add_argument("action", choices=["list", "show", "approve", "reject"])
+    products.add_argument("draft", nargs="?")
+    products.add_argument("--all", action="store_true", help="list decided drafts too")
+    products.add_argument("--body", action="store_true", help="show: print only the PR body")
+    products.add_argument("--by", help="who is deciding (default: $GRIDLAKE_APPROVER or $USER)")
+    products.add_argument("--reason", default="", help="why a draft is rejected")
+    products.add_argument(
+        "--pr", action="store_true", help="approve: commit on a branch, push, open a pull request"
+    )
+    products.add_argument("--base", default="main", help="branch the pull request targets")
+    products.add_argument("--remote", default="origin")
+    products.add_argument(
+        "--no-push", action="store_true", help="with --pr: commit the branch only"
+    )
+    products.add_argument(
+        "--apply", action="store_true", help="approve without --pr: git apply to --repo-root"
+    )
+    products.add_argument("--repo-root", default=".")
+    products.set_defaults(func=cmd_products)
 
     args = parser.parse_args(argv)
     logging.basicConfig(

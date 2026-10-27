@@ -1,0 +1,30 @@
+name: gold.ba_weekly_energy
+version: 1.0.0
+layer: gold
+domain: grid-operations
+owner: grid-analytics@gridlake.example
+classification: public
+description: >
+  Data product - weekly demand and peak demand per balancing authority, rolled up from
+  gold.ba_daily_energy, with how many days each period covers. Requested for bi-dashboards.
+primary_key: [week_start, ba_code]
+partition_by:
+  - {column: week_start, transform: identity}
+consumers: [bi-dashboards]
+transform:
+  sql: transforms/gold.ba_weekly_energy.sql
+  inputs: [gold.ba_daily_energy]
+  grain: week
+columns:
+  - {name: week_start, type: date, nullable: false, description: First day (Monday) of the UTC week}
+  - {name: ba_code, type: string, nullable: false, description: EIA balancing authority code}
+  - {name: ba_name, type: string, description: Balancing authority name}
+  - {name: total_demand_mwh, type: double, nullable: false, description: "Total demand in the week, MWh"}
+  - {name: peak_demand_mwh, type: double, nullable: false, description: "Highest hourly demand in the week, MWh", business_term: Peak Demand}
+  - {name: days_reported, type: int, nullable: false, description: Balancing-authority days with data in the period}
+  - {name: hours_reported, type: int, nullable: false, description: Hours with demand data in the period}
+quality:
+  - {rule: unique, columns: [week_start, ba_code], severity: error}
+  - {rule: range, column: total_demand_mwh, min: 0, severity: error}
+  - {rule: expression, sql: "peak_demand_mwh <= total_demand_mwh", description: A peak hour cannot exceed the period total, severity: error}
+  - {rule: range, column: days_reported, min: 1, max: 7, severity: error}

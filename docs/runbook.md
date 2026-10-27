@@ -50,7 +50,18 @@ lineage `version` facet. Roll back with `CALL system.rollback_to_snapshot(...)` 
 Athena or Spark.
 
 ## Add a data product
-1. Add `contracts/gold.<name>.yaml` with owner, classification, consumers, primary key and a
-   `unique` rule on it (enforced by tests).
-2. Add the SQL in `gridlake/transform/gold.py` and a step in `Pipeline.build_gold`.
-3. `terraform apply` creates the Glue table and its LF-tags from the contract.
+Most new products are roll-ups or reshapes of existing tables; declare them instead of coding them:
+```bash
+gridlake propose "Weekly peak demand per BA for the ops dashboard" --owner ops@example.com --trace
+gridlake products show <draft>              # governance, validation on today's data, the diff
+gridlake products approve <draft> --pr      # branch data-product/<name>, push, open the PR
+gridlake products reject <draft> --reason "..."
+```
+Review the classification first: it is at least the most restricted input's, and the rationale says
+when the request asked for less. After merge, `terraform apply` creates the Glue table and its
+LF-tags, and the next gold step builds the product. To change one, edit its contract and SQL and
+bump the contract version; its drafted tests in `tests/products/` keep running in CI.
+
+For a product that needs new logic (a new source, point-in-time features), add the contract, the
+SQL in `gridlake/transform/gold.py` and a step in `Pipeline.build_gold`, with a `unique` rule on
+the primary key (enforced by tests).

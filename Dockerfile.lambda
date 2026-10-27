@@ -5,5 +5,6 @@ COPY pyproject.toml README.md LICENSE /tmp/build/
 COPY src /tmp/build/src
 COPY contracts /tmp/build/contracts
 COPY seeds /tmp/build/seeds
+COPY transforms /tmp/build/transforms
 RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir "/tmp/build[aws,agent]" --target "${LAMBDA_TASK_ROOT}" && rm -rf /tmp/build
 CMD ["gridlake.aws_lambda.step_handler"]

@@ -43,5 +43,11 @@ docker:
 tf-validate:
 	cd infra/terraform && terraform fmt -check -recursive && terraform init -backend=false -input=false && terraform validate
 
+.PHONY: product-demo
+product-demo:       ## describe a dataset; the agent drafts its contract, SQL and tests for approval
+	$(BIN)/gridlake run --days 14
+	$(BIN)/gridlake propose "$(or $(REQUEST),Monthly renewable share by region for the sustainability report)" --owner $(or $(OWNER),analytics@gridlake.example) --trace
+	$(BIN)/gridlake products list
+
 clean:
 	rm -rf .gridlake .pytest_cache .ruff_cache .coverage

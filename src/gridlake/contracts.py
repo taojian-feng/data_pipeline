@@ -100,6 +100,7 @@ class Contract:
     freshness: dict[str, Any] | None = None
     consumers: tuple[str, ...] = ()
     source: str | None = None
+    transform: dict[str, Any] | None = None  # declared data products: SQL file, inputs, grain
     raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     @property
@@ -198,6 +199,7 @@ def _parse(raw: dict[str, Any], path: Path) -> Contract:
         freshness=raw.get("freshness"),
         consumers=tuple(raw.get("consumers", [])),
         source=raw.get("source"),
+        transform=raw.get("transform"),
         raw=raw,
     )
 

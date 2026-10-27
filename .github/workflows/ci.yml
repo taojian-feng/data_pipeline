@@ -69,6 +69,15 @@ jobs:
           gridlake triage --trace | tee triage.txt
           grep -q source_data_defect triage.txt
           gridlake incidents list
+      - name: Self-service agent drafts a data product
+        env:
+          GRIDLAKE_HOME: .gridlake-products
+        run: |
+          gridlake run --end 2026-10-15 --days 14 --no-telemetry
+          gridlake propose "Monthly renewable share by region for the sustainability report" \
+            --owner sustainability@gridlake.example --trace | tee propose.txt
+          grep -q "draft dp-region_monthly_renewable_share-d1" propose.txt
+          gridlake products show dp-region_monthly_renewable_share-d1 | grep -q "Check passed"
       - uses: actions/upload-artifact@v4
         with:
           name: knowledge-layer
