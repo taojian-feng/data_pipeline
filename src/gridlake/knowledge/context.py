@@ -66,10 +66,10 @@ def link_entities(graph: KnowledgeGraph, question: str) -> list[str]:
 def build_context(
     graph: KnowledgeGraph, index: VectorIndex, question: str, clearance: str = "public", k: int = 5
 ) -> ContextPack:
-    entities = link_entities(graph, question)
+    entities = [e for e in link_entities(graph, question) if graph.visible(e, clearance)]
     facts: list[str] = []
     for iri in entities:
-        facts.extend(f for f in graph.describe(iri) if "has column" not in f)
+        facts.extend(f for f in graph.describe(iri, clearance) if "has column" not in f)
     bas = [e for e in entities if graph.is_a(e, "BalancingAuthority")]
     codes = [o.value for o in graph.objects(bas[0], "code")] if len(bas) == 1 else []
     filters: dict[str, Any] = {"doc_type": "fact"}

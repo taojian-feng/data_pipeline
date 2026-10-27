@@ -138,3 +138,21 @@ def test_summary_documents_answer_superlatives():
     idx = VectorIndex().build(list(docs.values()))
     hit = idx.search("which balancing authority had the highest renewable share", k=1)[0]
     assert hit.document.doc_id == "ranking/renewable_share_pct"
+
+
+def test_context_pack_hides_data_estate_facts_above_clearance(graph):
+    idx = VectorIndex().build(docs())
+    question = "Which table holds Renewable Share for CAISO?"
+    public = build_context(graph, idx, question, clearance="public")
+    internal = build_context(graph, idx, question, clearance="internal")
+    measures = "gold.ba_daily_energy.renewable_share_pct measures Renewable Share"
+    assert measures not in public.graph_facts and measures in internal.graph_facts
+    assert "California Independent System Operator" in public.entities  # grid facts stay open
+
+
+def test_graph_roundtrips_through_ntriples(graph):
+    again = KnowledgeGraph.from_ntriples(Ontology.load(), graph.to_ntriples())
+    assert again.stats() == graph.stats()
+    ciso = graph.entity("BalancingAuthority", "CISO")
+    assert again.describe(ciso) == graph.describe(ciso)
+    assert again.to_ntriples() == graph.to_ntriples()

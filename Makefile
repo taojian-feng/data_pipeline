@@ -26,7 +26,7 @@ run:                ## end-to-end pipeline over the last 14 days (synthetic EIA 
 demo: run           ## run, then show quality, lineage and a grounded GraphRAG context pack
 	$(BIN)/gridlake quality
 	$(BIN)/gridlake lineage
-	$(BIN)/gridlake ask "Which balancing authority had the highest renewable share, and which table should I use?" --clearance internal
+	$(BIN)/gridlake ask "Which balancing authority had the highest renewable share, and which table should I use?" --clearance internal --trace
 
 ask:
 	$(BIN)/gridlake ask "$(Q)" --clearance $(or $(CLEARANCE),public)

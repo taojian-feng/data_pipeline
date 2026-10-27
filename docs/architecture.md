@@ -11,7 +11,7 @@ Downstream consumers want very different things from the same raw data:
 | BI / sustainability reporting | daily demand, peak, renewable share, carbon intensity | `gold.ba_daily_energy`, `gold.fuel_mix_daily` |
 | ML (SageMaker) demand forecasting | leakage-free hourly features | `gold.demand_forecast_features` |
 | Reliability engineering | frequency excursions (confidential) | `gold.grid_reliability_daily` |
-| AI agents / RAG assistants | vocabulary, relationships, citeable facts, access control | ontology + knowledge graph + vector index |
+| AI agents / RAG assistants | vocabulary, relationships, citeable facts, access control | ontology + knowledge graph + vector index, grid analyst agent (`src/gridlake/agent`) |
 
 ## Logical flow
 
@@ -92,6 +92,7 @@ flowchart TB
 | Governance | contract classification + clearance filter | Lake Formation tag-based access control from the same contracts |
 | Lineage | OpenLineage JSONL | OpenLineage HTTP (Marquez, DataZone / SageMaker Catalog) |
 | Knowledge base | Hashed TF-IDF index | Amazon Bedrock Knowledge Base (S3 data source + metadata filters) |
+| Grid analyst agent | `gridlake ask`: offline planner (or Claude on Bedrock), DuckDB SQL tool | Bedrock Agent + tools Lambda, Athena workgroup, Bedrock KB `Retrieve` with a classification filter |
 
 Switching is configuration only: `GRIDLAKE_CATALOG=glue|s3tables`, `GRIDLAKE_WAREHOUSE`, `GRIDLAKE_S3_TABLES_ARN`.
 

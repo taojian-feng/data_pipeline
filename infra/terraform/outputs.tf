@@ -26,3 +26,12 @@ output "knowledge_base_source" {
 output "governed_tables" {
   value = sort(keys(local.contracts))
 }
+
+output "analyst_agent_id" {
+  description = "Bedrock Agent id for the grid analyst (null unless enable_analyst_agent)."
+  value       = var.enable_analyst_agent ? aws_bedrockagent_agent.analyst[0].agent_id : null
+}
+
+output "analyst_athena_workgroup" {
+  value = var.enable_analyst_agent ? aws_athena_workgroup.analyst[0].name : null
+}

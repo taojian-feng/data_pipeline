@@ -1,11 +1,12 @@
 locals {
   pipeline_env = {
-    GRIDLAKE_CATALOG     = "glue"
-    GRIDLAKE_WAREHOUSE   = local.warehouse
-    GRIDLAKE_HOME        = "/tmp/gridlake"
-    GRIDLAKE_KB_S3_URI   = "s3://${aws_s3_bucket.this["knowledge"].bucket}/kb/"
-    EIA_API_KEY_SECRET   = var.eia_api_key_secret_name
-    POWERTOOLS_LOG_LEVEL = "INFO"
+    GRIDLAKE_CATALOG      = "glue"
+    GRIDLAKE_WAREHOUSE    = local.warehouse
+    GRIDLAKE_HOME         = "/tmp/gridlake"
+    GRIDLAKE_KB_S3_URI    = "s3://${aws_s3_bucket.this["knowledge"].bucket}/kb/"
+    GRIDLAKE_GRAPH_S3_URI = "s3://${aws_s3_bucket.this["knowledge"].bucket}/graph/graph.nt"
+    EIA_API_KEY_SECRET    = var.eia_api_key_secret_name
+    POWERTOOLS_LOG_LEVEL  = "INFO"
   }
 }
 

@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from gridlake.contracts import cleared, metadata_classification
+
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 OWL = "http://www.w3.org/2002/07/owl#"
@@ -29,6 +31,7 @@ XSD = "http://www.w3.org/2001/XMLSchema#"
 RDFS_LABEL = RDFS + "label"
 RDFS_COMMENT = RDFS + "comment"
 _XSD_TYPES = {"string": "string", "boolean": "boolean", "decimal": "decimal"}
+_NT_LINE = re.compile(r'<([^>]*)> <([^>]*)> (?:<([^>]*)>|"((?:[^"\\]|\\.)*)"(?:\^\^<([^>]*)>)?) \.')
 
 
 class OntologyViolation(ValueError):
@@ -181,21 +184,44 @@ class KnowledgeGraph:
     def instances(self, cls: str) -> list[str]:
         return sorted(iri for iri in self._types if self.is_a(iri, cls))
 
-    def describe(self, iri: str) -> list[str]:
-        """Human/LLM-readable facts about an entity, outgoing and incoming."""
+    def visible(self, iri: str, clearance: str) -> bool:
+        """Can a caller with ``clearance`` see this node? Grid entities are open; datasets
+        and their columns follow the dataset's metadata classification (ADR 0005)."""
+        if self.is_a(iri, "Substation"):  # known only from confidential telemetry
+            return cleared("confidential", clearance)
+        if self.is_a(iri, "Column"):
+            return all(
+                self.visible(ds, clearance)
+                for ds, _, _ in self.match(p=self.ont.iri("hasColumn"), o=iri)
+            )
+        if self.is_a(iri, "Dataset"):
+            cls = [o.value for o in self.objects(iri, "classification") if isinstance(o, Literal)]
+            return cleared(metadata_classification(cls[0]) if cls else None, clearance)
+        return True
+
+    def describe(self, iri: str, clearance: str | None = None) -> list[str]:
+        """Human/LLM-readable facts about an entity, outgoing and incoming. With a clearance,
+        facts touching a dataset or column above it are left out."""
+        if clearance is not None and not self.visible(iri, clearance):
+            return []
+
+        def shown(node: Node) -> bool:
+            return clearance is None or isinstance(node, Literal) or self.visible(node, clearance)
+
         facts = []
         name = self.label(iri)
         for _, p, o in sorted(self.match(s=iri), key=str):
             if p == RDF_TYPE:
                 facts.append(f"{name} is a {self.ont.local(o)}")
-            elif p in (RDFS_LABEL,):
+            elif p in (RDFS_LABEL,) or not shown(o):
                 continue
             elif isinstance(o, Literal):
                 facts.append(f"{name} {self._pname(p)} {o.value}")
             else:
                 facts.append(f"{name} {self._pname(p)} {self.label(o)}")
         for s, p, _ in sorted(self.match(o=iri), key=str):
-            facts.append(f"{self.label(s)} {self._pname(p)} {name}")
+            if shown(s):
+                facts.append(f"{self.label(s)} {self._pname(p)} {name}")
         return facts
 
     def upstream(self, dataset_iri: str) -> list[str]:
@@ -224,6 +250,31 @@ class KnowledgeGraph:
         return "".join(
             f"<{s}> <{p}> {self._n3(o)} .\n" for s, p, o in sorted(self.triples, key=str)
         )
+
+    @classmethod
+    def from_ntriples(cls, ontology: Ontology, text: str) -> KnowledgeGraph:
+        """Load what ``to_ntriples`` wrote (e.g. the graph.nt the pipeline publishes to S3)."""
+        g = cls(ontology)
+        for line in filter(None, (ln.strip() for ln in text.splitlines())):
+            m = _NT_LINE.fullmatch(line)
+            if m is None:
+                raise ValueError(f"not an N-Triples line: {line[:120]}")
+            s, p, iri, lit, dtype = m.groups()
+            if iri is not None:
+                o: Node = iri
+                if p == RDF_TYPE:
+                    g._types[s].add(ontology.local(iri))
+            else:
+                raw = re.sub(r'\\(["\\n])', lambda e: "\n" if e[1] == "n" else e[1], lit)
+                kind = (dtype or "").rsplit("#", 1)[-1] or "string"
+                if kind == "boolean":
+                    o = Literal(raw == "true", "boolean")
+                elif kind == "decimal":
+                    o = Literal(float(raw), "decimal")
+                else:
+                    o = Literal(raw)
+            g.triples.add((s, p, o))
+        return g
 
     def to_turtle(self) -> str:
         ns, pre = self.ont.ns, self.ont.prefix

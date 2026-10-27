@@ -86,3 +86,25 @@ variable "bedrock_data_source_id" {
   type    = string
   default = ""
 }
+
+variable "enable_analyst_agent" {
+  description = "Create the grid analyst Bedrock Agent, its tools Lambda and an Athena workgroup."
+  type        = bool
+  default     = false
+}
+
+variable "analyst_agent_model" {
+  description = "Foundation model or inference profile id for the Bedrock Agent (must be enabled in the account)."
+  type        = string
+  default     = "anthropic.claude-opus-5-5"
+}
+
+variable "analyst_agent_max_clearance" {
+  description = "Highest classification Lake Formation lets the agent's tools read. Per-caller clearance narrows it further."
+  type        = string
+  default     = "internal"
+  validation {
+    condition     = contains(["public", "internal", "confidential"], var.analyst_agent_max_clearance)
+    error_message = "analyst_agent_max_clearance must be public, internal or confidential."
+  }
+}

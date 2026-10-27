@@ -28,7 +28,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from gridlake.contracts import CLASSIFICATIONS, Contract
+from gridlake.contracts import CLASSIFICATIONS, Contract, metadata_classification
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:\.[a-z0-9_]+)*")
 
@@ -337,14 +337,11 @@ def catalog_documents(
             Document(
                 doc_id=f"catalog/{c.name}",
                 text=text,
-                # Metadata about a table is less sensitive than its rows, but never more open than internal.
                 metadata={
                     "source_table": c.name,
                     "layer": c.layer,
                     "owner": c.owner,
-                    "classification": "internal"
-                    if c.classification == "public"
-                    else c.classification,
+                    "classification": metadata_classification(c.classification),
                     "doc_type": "catalog",
                 },
             )
@@ -362,6 +359,13 @@ def upload_to_s3(directory: Path, s3_uri: str) -> int:
     for p in files:
         s3.upload_file(str(p), bucket, f"{prefix.rstrip('/')}/{p.name}".lstrip("/"))
     return len(files)
+
+
+def upload_file_to_s3(path: Path, s3_uri: str) -> None:
+    import boto3  # optional dependency, only needed on AWS
+
+    bucket, _, key = s3_uri.removeprefix("s3://").partition("/")
+    boto3.client("s3").upload_file(str(path), bucket, key)
 
 
 def export_bedrock_kb(docs: Iterable[Document], directory: Path) -> int:

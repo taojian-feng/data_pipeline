@@ -8,11 +8,12 @@
 A production-grade data pipeline that turns raw US power-grid data (EIA-930 hourly operations
 and streaming substation telemetry) into governed data products for BI, ML and AI agents.
 It covers ingestion, an Iceberg medallion lakehouse, contract-driven quality gates, OpenLineage
-lineage, and a knowledge layer (ontology, knowledge graph, access-aware RAG retrieval).
+lineage, a knowledge layer (ontology, knowledge graph, access-aware RAG retrieval), and a
+**grid analyst agent** that answers questions by choosing its own tools and cites the tables it used.
 
 **It runs end to end on a laptop in about 10 seconds with no cloud account**, and the same code
 deploys to AWS (S3 Tables / Glue Data Catalog, Lake Formation, Kinesis, Lambda, Glue Spark,
-Step Functions, Bedrock Knowledge Bases) through the Terraform in [`infra/terraform`](infra/terraform).
+Step Functions, Bedrock Knowledge Bases, Bedrock Agents, Athena) through the Terraform in [`infra/terraform`](infra/terraform).
 
 ```bash
 make install && make demo        # or: pip install -e ".[dev]" && gridlake run
@@ -35,6 +36,7 @@ make install && make demo        # or: pip install -e ".[dev]" && gridlake run
 | **Data products for multiple consumers**: BI, sustainability reporting, leakage-free ML features, reliability engineering | [`transform/gold.py`](src/gridlake/transform/gold.py) |
 | **Ontology + knowledge graph** joining grid topology with the data estate (datasets, columns, glossary, owners, lineage); OWL / Turtle / N-Triples for Neptune | [`knowledge/ontology.yaml`](src/gridlake/knowledge/ontology.yaml), [`knowledge/graph.py`](src/gridlake/knowledge/graph.py) |
 | **RAG for agents**: clearance-filtered retrieval, metadata filters, GraphRAG context packs, Bedrock KB export | [`knowledge/retrieval.py`](src/gridlake/knowledge/retrieval.py), [`knowledge/context.py`](src/gridlake/knowledge/context.py), [ADR 0005](docs/adr/0005-ontology-guardrails-and-access-aware-retrieval.md) |
+| **Grid analyst agent**: the model picks tools (SQL on gold, knowledge graph, document search, catalog) and cites tables; caller clearance is bound outside the model and enforced in every tool, then again by Lake Formation; runs offline or on Claude via Amazon Bedrock, or as a Bedrock Agent | [`agent/`](src/gridlake/agent), [`agent.tf`](infra/terraform/agent.tf), [ADR 0005](docs/adr/0005-ontology-guardrails-and-access-aware-retrieval.md) |
 | **Least-privilege governance**: Lake Formation tag-based access control generated from contracts, KMS, TLS-only buckets | [`governance.tf`](infra/terraform/governance.tf), [`iam.tf`](infra/terraform/iam.tf) |
 | **Operations**: Step Functions with retries and alerts, DLQ, iterator-age alarms, nightly Iceberg maintenance, runbook | [`orchestration.tf`](infra/terraform/orchestration.tf), [`monitoring.tf`](infra/terraform/monitoring.tf), [runbook](docs/runbook.md) |
 | **Validating AI-assisted code** in a regulated setting | [docs/ai-assisted-delivery.md](docs/ai-assisted-delivery.md) |
@@ -85,7 +87,7 @@ gridlake run --days 14            # full pipeline into ./.gridlake (Iceberg ware
 gridlake quality                  # rule outcomes and quarantined rows
 gridlake lineage                  # dataset lineage from OpenLineage events
 gridlake sql "SELECT * FROM gold_ba_daily_energy ORDER BY date DESC LIMIT 5"
-gridlake ask "What was the renewable share for CAISO on 2026-10-20?"
+gridlake ask "What was the renewable share for CAISO on 2026-10-20?" --trace   # grid analyst agent
 pytest                            # 40+ tests including end-to-end idempotency and failure paths
 ```
 
@@ -131,22 +133,52 @@ $ gridlake sql "SELECT failed_rules, count(*) n FROM quality_quarantine GROUP BY
  referential(ba_code->silver.dim_balancing_authority.ba_code)      1
 ```
 
-A grounded context pack for an agent: entities are linked through the knowledge graph and
-passages are filtered by the caller's clearance before ranking.
+### Grid analyst agent
+
+`gridlake ask` runs a tool-using agent. The model decides which tools to call: `lookup_entity`
+resolves "California ISO" to `CISO` through the knowledge graph, `run_sql` queries the gold
+tables, `describe_table` names the owner and lineage, and `search_documents` retrieves passages.
+Every answer lists the tables and documents it came from.
 
 ```text
-$ gridlake ask "Which balancing authority had the highest renewable share, and which table should I use?" --clearance internal
-## Knowledge graph facts
-- Renewable Share is a BusinessTerm
-- gold.ba_daily_energy.renewable_share_pct measures Renewable Share
-## Retrieved passages
-[ranking/renewable_share_pct] Ranking of balancing authorities by average renewable share (highest first),
-  2026-10-10 to 2026-10-23: 1. Bonneville Power Administration (BPAT) 90.6%; 2. California Independent System Operator (CISO) 34.6%; ...
-[catalog/gold.ba_daily_energy] Table gold.ba_daily_energy is a gold-layer dataset ... owned by grid-analytics@gridlake.example, classified public ...
+$ gridlake ask "Which balancing authority had the highest renewable share, and which table should I use?" --clearance internal --trace
+> lookup_entity({"text": "Which balancing authority had the highest renewable share, and which table should I use?"}) -> ok
+> run_sql({"sql": "SELECT ba_code, min(date) AS first_day, max(date) AS last_day, round(avg(renewable_share_pct), 2) AS value FROM gold.ba_daily_energy GROUP BY ba_code ORDER BY value DESC LIMIT 10"}) -> ok
+> describe_table({"table": "gold.ba_daily_energy"}) -> ok
+
+BPAT ranks first by average renewable share (90.6%, 2026-10-10 to 2026-10-23). Ranking: 1. BPAT 90.6%; 2. CISO 34.6%; ...
+The governed table is gold.ba_daily_energy (public, owned by grid-analytics@gridlake.example, contract v1.0.0),
+derived from silver.demand_hourly, silver.dim_balancing_authority, silver.dim_fuel_type, silver.generation_hourly, ...
+
+sources: tables=gold.ba_daily_energy; documents=knowledge-graph  [offline-planner, clearance=internal]
+
+$ gridlake ask "Which balancing authority had the most frequency excursion minutes?" --trace
+> lookup_entity(...) -> ok
+> run_sql({"sql": "SELECT ba_code, ... FROM gold.grid_reliability_daily GROUP BY ba_code ..."}) -> error: access denied:
+  gold.grid_reliability_daily is classified confidential; caller clearance is public
 ```
 
-The same question with `--clearance public` never sees confidential telemetry or internal catalog
-entries, which is the behaviour Lake Formation enforces for SQL users.
+**Access is enforced outside the model.** The caller's clearance is bound when the toolbox is
+built (from the CLI flag locally, from Bedrock Agent session attributes set by the calling app on
+AWS). The model never sees a clearance parameter and cannot pass one. Each tool checks it:
+
+| Tool | Enforcement |
+|---|---|
+| `run_sql` | DuckDB's parser lists every table the statement reads (through CTEs, joins and subqueries). Anything but one `SELECT`, any table function (`read_csv`, `read_parquet`) and any table above clearance is refused before the query runs. Locally only the checked tables are attached and file access is switched off; on Athena, Lake Formation grants the tools' role tables up to `analyst_agent_max_clearance` only. |
+| `list_tables` | Lists only tables the caller may query. |
+| `describe_table` | Catalog metadata (owner, lineage, rules) is never more open than `internal`. |
+| `lookup_entity` | Graph facts touching a dataset, column or substation above clearance are dropped. |
+| `search_documents` | Local index filters by clearance before ranking. On AWS, Bedrock `Retrieve` gets a `classification` metadata filter, and returned hits are checked again. |
+
+**Models.** Without a cloud account the agent runs on `OfflinePlanner`, a deterministic,
+rule-based stand-in (not an LLM) that covers metric lookups, rankings and catalog questions.
+With AWS credentials, `pip install -e ".[agent]"` and `gridlake ask "..." --llm bedrock` runs the
+same loop on Claude in Amazon Bedrock (`GRIDLAKE_AGENT_MODEL`, default `anthropic.claude-opus-5-5`).
+Set `GRIDLAKE_AGENT_SQL=athena` and `GRIDLAKE_ATHENA_WORKGROUP` to query Athena instead of the local
+lake, and `GRIDLAKE_BEDROCK_KB_ID` to search the Bedrock Knowledge Base.
+
+`gridlake ask --context-only` still prints the GraphRAG context pack (linked entities, graph
+facts and clearance-filtered passages) for use in another model's prompt.
 
 ## Guarantees backed by tests
 
@@ -161,6 +193,10 @@ entries, which is the behaviour Lake Formation enforces for SQL users.
 | Step-by-step orchestration (as in Step Functions) equals a single run | `test_step_mode_matches_full_run` |
 | Invalid relationships are rejected by the ontology | `test_ontology_guardrails_reject_invalid_triples` |
 | Retrieval never returns documents above the caller's clearance | `test_retrieval_enforces_clearance_before_ranking` |
+| Graph facts about datasets above the caller's clearance stay out of context packs | `test_context_pack_hides_data_estate_facts_above_clearance` |
+| The agent's SQL tool refuses writes, file reads and tables above clearance | `test_only_single_selects_over_governed_tables`, `test_run_sql_enforces_clearance_before_querying` |
+| The model cannot raise its own clearance; Bedrock Agents take it from the session | `test_model_cannot_pass_its_own_clearance`, `test_action_group_takes_clearance_from_the_session` |
+| Bedrock KB retrieval is filtered by classification server-side and checked again | `test_bedrock_retrieve_filters_by_classification_server_and_client_side` |
 
 ## Deploying to AWS
 
@@ -179,6 +215,14 @@ machine on an EventBridge schedule that ends with a Bedrock Knowledge Base sync;
 CloudWatch alarms. Point a Bedrock Knowledge Base at the `knowledge_base_source` output and pass
 its ids back in as variables to enable the sync step.
 
+Grid analyst agent (off by default): `-var enable_analyst_agent=true` adds an Athena workgroup with
+a 1 GiB scan cutoff, a tools Lambda (same image, `gridlake.agent.bedrock_action_group.handler`) with
+a Lake Formation grant capped at `analyst_agent_max_clearance`, and a Bedrock Agent whose
+instructions and action-group functions come from the repo (`src/gridlake/agent/instructions.txt`,
+`infra/terraform/agent_functions.json`, kept in sync with the tools by a test). The calling app
+passes the user's clearance as `sessionState.sessionAttributes.clearance` on `InvokeAgent`. Set
+`analyst_agent_model` to a model or inference profile enabled for Bedrock Agents in your account.
+
 Runtime switches: `GRIDLAKE_CATALOG=glue` with `GRIDLAKE_WAREHOUSE=s3://...`, or
 `GRIDLAKE_CATALOG=s3tables` with `GRIDLAKE_S3_TABLES_ARN=arn:aws:s3tables:...`.
 
@@ -193,6 +237,7 @@ src/gridlake/
   transform/          silver and gold SQL (DuckDB over Arrow)
   quality/            contract-driven quality engine
   knowledge/          ontology, knowledge graph, retrieval index, GraphRAG context packs
+  agent/              grid analyst: agent loop, access-aware tools, Bedrock / offline models, Bedrock Agents action group
   catalog.py          Iceberg catalogs (local / Glue / S3 Tables) and contract-bound tables
   pipeline.py         orchestration, lineage, quality gates, run manifests
   aws_lambda.py       Kinesis consumer and Step Functions task handlers
@@ -208,6 +253,8 @@ tests/                unit and end-to-end tests
 * The local engine is single-process; the Glue Spark job is the scale-out path for backfills.
 * The hashed TF-IDF embedder is a deterministic offline stand-in for Titan embeddings
   (`BedrockEmbedder`), and the in-memory graph is a stand-in for Amazon Neptune.
+* The offline planner is a scripted stand-in so the agent runs anywhere; open-ended questions
+  need `--llm bedrock`. The Bedrock and Athena paths are covered by tests with stubbed AWS clients.
 * The Terraform passes `terraform validate` in CI; applying it needs your own AWS account and
   an image pushed to the ECR repository it creates.
 
