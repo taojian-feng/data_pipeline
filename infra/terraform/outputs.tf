@@ -35,3 +35,8 @@ output "analyst_agent_id" {
 output "analyst_athena_workgroup" {
   value = var.enable_analyst_agent ? aws_athena_workgroup.analyst[0].name : null
 }
+
+output "reliability_incidents_uri" {
+  description = "Where the data reliability agent writes drafts (set GRIDLAKE_INCIDENTS_S3_URI to this to review them)."
+  value       = var.enable_reliability_agent ? "s3://${aws_s3_bucket.this["artifacts"].bucket}/incidents/" : null
+}

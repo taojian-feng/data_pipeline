@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -516,6 +516,62 @@ class Pipeline:
             )
             out[key] = _dates_of(changed, column)
         return out
+
+    REPLAYABLE: ClassVar[dict[str, tuple[str, str]]] = {
+        "silver.demand_hourly": ("demand", "period"),
+        "silver.generation_hourly": ("generation", "period"),
+        "silver.grid_telemetry_minute": ("telemetry", "minute_ts"),
+    }
+
+    def replay_quarantine(self, table: str, rule: str | None = None) -> dict:
+        """Re-check quarantined rows of a silver table against today's contract and reference
+        data, publish the ones that now pass, and rebuild the gold dates they touch.
+
+        Run it after a reference-data or contract fix: bronze landing is idempotent, so
+        re-running the window alone would not bring those rows back. Rows that still fail
+        stay in quarantine and are not appended again.
+        """
+        if table not in self.REPLAYABLE:
+            raise ValueError(f"replay supports {sorted(self.REPLAYABLE)}")
+        contract = self.contracts[table]
+        affected: dict[str, list[date]] = {}
+
+        def run():
+            q = self.lake.read("quality.quarantine")
+            q = q.filter(pc.equal(q.column("table_name"), table))
+            rows = [r for r in q.to_pylist() if rule is None or rule in r["failed_rules"]]
+            latest: dict[tuple, dict] = {}
+            for r in sorted(rows, key=lambda r: r["quarantined_ts"]):
+                record = json.loads(r["record_json"])
+                latest[tuple(record.get(k) for k in contract.primary_key)] = record
+            if not latest:
+                return {"replayed": 0}
+            raw = pa.Table.from_pylist(list(latest.values()))
+            # Cast without the required-column check: rows that are still null fail the gate.
+            data = pa.table(
+                {f.name: raw.column(f.name).cast(f.type) for f in contract.arrow_schema()}
+            )
+            report = evaluate(contract, data, reference_loader=self.lake.read)
+            self.lake.append("quality.results", results_table(report, self.run_id))
+            self._quality[table] = report
+            updated, inserted = (
+                self.lake.upsert(table, report.valid) if report.valid.num_rows else (0, 0)
+            )
+            key, column = self.REPLAYABLE[table]
+            affected[key] = _dates_of(report.valid, column)
+            return {
+                "replayed": data.num_rows,
+                "rows": updated + inserted,
+                "still_failing": report.quarantined.num_rows,
+            }
+
+        refs = [r["ref_table"] for r in contract.quality if r["rule"] == "referential"]
+        metrics = self._step(
+            f"replay_{contract.table}", ["quality.quarantine", *refs], [table], run
+        )
+        if any(affected.values()):
+            self.build_gold(affected)
+        return metrics
 
     # -- entry points -------------------------------------------------------
     STEPS = ("seed", "ingest_eia", "ingest_stream", "silver", "gold", "knowledge")

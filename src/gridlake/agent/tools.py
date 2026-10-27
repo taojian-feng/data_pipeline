@@ -377,7 +377,7 @@ class Toolbox:
 
     def call(self, name: str, args: dict[str, Any]) -> ToolResult:
         handler = getattr(self, f"_tool_{name}", None)
-        if handler is None or name not in {s["name"] for s in SPECS}:
+        if handler is None or name not in {s["name"] for s in self.specs()}:
             return ToolResult({"error": f"unknown tool {name!r}"}, is_error=True)
         try:
             return handler(**(args or {}))

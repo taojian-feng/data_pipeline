@@ -1,8 +1,9 @@
-# AWS Lambda image: one image, two handlers (see infra/terraform/compute.tf)
+# AWS Lambda image: one image for every handler (see infra/terraform/compute.tf); the agent
+# extra lets the reliability agent call Claude on Bedrock when reliability_agent_llm=bedrock.
 FROM public.ecr.aws/lambda/python:3.12
 COPY pyproject.toml README.md LICENSE /tmp/build/
 COPY src /tmp/build/src
 COPY contracts /tmp/build/contracts
 COPY seeds /tmp/build/seeds
-RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir "/tmp/build[aws]" --target "${LAMBDA_TASK_ROOT}" && rm -rf /tmp/build
+RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir "/tmp/build[aws,agent]" --target "${LAMBDA_TASK_ROOT}" && rm -rf /tmp/build
 CMD ["gridlake.aws_lambda.step_handler"]

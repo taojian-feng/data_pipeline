@@ -1,4 +1,4 @@
-.PHONY: install lint format test run demo ask quality lineage docker tf-validate clean
+.PHONY: install lint format test run demo ask incident-demo quality lineage docker tf-validate clean
 
 PY ?= python3
 VENV ?= .venv
@@ -30,6 +30,11 @@ demo: run           ## run, then show quality, lineage and a grounded GraphRAG c
 
 ask:
 	$(BIN)/gridlake ask "$(Q)" --clearance $(or $(CLEARANCE),public)
+
+incident-demo:      ## inject a source fault (FAULT=new_fuel_type|unit_change|feed_outage), then triage it
+	-$(BIN)/gridlake run --days 14 --inject-fault $(or $(FAULT),new_fuel_type)
+	$(BIN)/gridlake triage --trace
+	$(BIN)/gridlake incidents list
 
 docker:
 	docker build -t gridlake:local .

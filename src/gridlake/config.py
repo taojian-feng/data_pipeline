@@ -47,6 +47,17 @@ class Settings:
         default_factory=lambda: os.getenv("GRIDLAKE_ATHENA_WORKGROUP")
     )
     bedrock_kb_id: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_BEDROCK_KB_ID"))
+    # Data reliability agent: where drafts go, and where it reads run history on AWS.
+    incidents_s3_uri: str | None = field(
+        default_factory=lambda: os.getenv("GRIDLAKE_INCIDENTS_S3_URI")
+    )
+    state_machine_arn: str | None = field(
+        default_factory=lambda: os.getenv("GRIDLAKE_STATE_MACHINE_ARN")
+    )
+    alerts_topic_arn: str | None = field(
+        default_factory=lambda: os.getenv("GRIDLAKE_ALERTS_TOPIC_ARN")
+    )
+    github_repo: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_GITHUB_REPO"))
     contracts_dir: Path = field(default_factory=lambda: _resource_dir("contracts", "_contracts"))
     seeds_dir: Path = field(default_factory=lambda: _resource_dir("seeds", "_seeds"))
 
@@ -78,6 +89,10 @@ class Settings:
     @property
     def runs_dir(self) -> Path:
         return self.home / "runs"
+
+    @property
+    def incidents_dir(self) -> Path:
+        return self.home / "incidents"
 
     def ensure_dirs(self) -> None:
         for d in (

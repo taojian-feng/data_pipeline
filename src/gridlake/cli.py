@@ -24,13 +24,29 @@ def cmd_run(args: argparse.Namespace) -> int:
         else datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     )
     start = _day(args.start) if args.start else end - timedelta(days=args.days)
-    summary = Pipeline(Settings()).run(
-        start,
-        end,
-        telemetry_hours=args.telemetry_hours,
-        produce_telemetry=not args.no_telemetry,
-        reconcile_late=args.reconcile,
-    )
+    settings = Settings()
+    source = None
+    if args.inject_fault:
+        from gridlake.reliability.faults import FaultySource
+        from gridlake.sources.eia import SyntheticEIASource, load_balancing_authorities
+
+        source = FaultySource(
+            SyntheticEIASource(load_balancing_authorities(settings.seeds_dir)), args.inject_fault
+        )
+    pipeline = Pipeline(settings, source=source)
+    try:
+        summary = pipeline.run(
+            start,
+            end,
+            telemetry_hours=args.telemetry_hours,
+            produce_telemetry=not args.no_telemetry,
+            reconcile_late=args.reconcile,
+        )
+    except Exception as exc:  # the manifest is written; report the failure like a scheduler would
+        from gridlake.pipeline import RunSummary
+
+        summary = RunSummary(pipeline.run_id, "", pipeline.steps)
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
     width = max(len(s.name) for s in summary.steps)
     for s in summary.steps:
         print(
@@ -112,6 +128,83 @@ def cmd_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay(args: argparse.Namespace) -> int:
+    from gridlake.pipeline import Pipeline
+
+    pipeline = Pipeline(Settings())
+    started = datetime.now(UTC).isoformat()
+    try:
+        pipeline.replay_quarantine(args.table, args.rule)
+    finally:
+        summary = pipeline._write_manifest(started)
+    for s in summary.steps:
+        print(f"{s.status:<9} {s.name:<30} {json.dumps(s.metrics, default=str)}")
+    return 0 if summary.ok else 1
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    from gridlake.reliability import triage_run
+
+    run, triages = triage_run(
+        Settings(),
+        run_id=args.run,
+        clearance=args.clearance,
+        llm=args.llm,
+        min_rate=args.min_rate,
+        min_rows=args.min_rows,
+    )
+    if args.json:
+        print(json.dumps([t.to_dict() for t in triages], indent=2, default=str))
+        return 0
+    print(f"run {run.run_id} ({run.status}, started {run.started}): {len(triages)} incident(s)")
+    for t in triages:
+        print(f"\n== {t.incident.id}: {t.incident.headline()}")
+        if args.trace:
+            for step in t.steps:
+                status = "ok" if step.ok else f"error: {step.error}"
+                print(f"> {step.tool}({json.dumps(step.input)[:160]}) -> {status}")
+        print(t.summary)
+        for d in t.drafts:
+            print(f"  draft {d.id} [{d.kind}] {d.title}")
+    if triages:
+        print("\nreview: gridlake incidents show <draft>; then approve or reject it")
+    return 0
+
+
+def cmd_incidents(args: argparse.Namespace) -> int:
+    import getpass
+    import os
+    from pathlib import Path
+
+    from gridlake.reliability import draft_store
+    from gridlake.reliability.drafts import GitHubIssues, approve, reject
+
+    settings = Settings()
+    store = draft_store(settings)
+    if args.action == "list":
+        for d in store.list(None if args.all else "pending"):
+            print(f"{d.id:<28} {d.status:<9} {d.kind:<6} {d.title}")
+        return 0
+    if not args.draft:
+        print("name a draft id", file=sys.stderr)
+        return 2
+    if args.action == "show":
+        print(store.get(args.draft).render())
+        return 0
+    who = args.by or os.getenv("GRIDLAKE_APPROVER") or getpass.getuser()
+    if args.action == "reject":
+        print(reject(store, args.draft, who, args.reason).render())
+        return 0
+    repo, token = settings.github_repo, os.getenv("GITHUB_TOKEN")
+    github = GitHubIssues(repo, token) if repo and token else None
+    root = Path(args.repo_root).resolve()
+    draft = approve(
+        store, args.draft, who, settings.incidents_dir / "approved", root, github, args.apply
+    )
+    print(f"{draft.id} approved by {draft.decided_by}: {draft.outcome}")
+    return 0
+
+
 def cmd_lineage(args: argparse.Namespace) -> int:
     from gridlake import lineage as ol
 
@@ -158,6 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--reconcile", action="store_true", help="fold late stream events into silver/gold"
     )
+    run.add_argument(
+        "--inject-fault",
+        choices=["new_fuel_type", "unit_change", "feed_outage"],
+        help="demo: inject a realistic source fault for `gridlake triage` to diagnose",
+    )
     run.set_defaults(func=cmd_run)
 
     step = sub.add_parser(
@@ -202,6 +300,48 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("-k", type=int, default=4, help="passages in the context pack")
     ask.add_argument("--json", action="store_true")
     ask.set_defaults(func=cmd_ask)
+
+    replay = sub.add_parser(
+        "replay", help="re-check quarantined silver rows after a fix and publish those that pass"
+    )
+    replay.add_argument(
+        "table",
+        choices=[
+            "silver.demand_hourly",
+            "silver.generation_hourly",
+            "silver.grid_telemetry_minute",
+        ],
+    )
+    replay.add_argument("--rule", help="only rows that failed this rule")
+    replay.set_defaults(func=cmd_replay)
+
+    triage = sub.add_parser(
+        "triage", help="data reliability agent: diagnose a run's incidents and draft fixes"
+    )
+    triage.add_argument("--run", help="run id or prefix (default: the latest run)")
+    triage.add_argument(
+        "--clearance", choices=["public", "internal", "confidential"], default="internal"
+    )
+    triage.add_argument("--llm", choices=["offline", "bedrock"])
+    triage.add_argument(
+        "--min-rate", type=float, default=0.02, help="share of rows a rule must reject"
+    )
+    triage.add_argument("--min-rows", type=int, default=5)
+    triage.add_argument("--trace", action="store_true", help="print each tool call")
+    triage.add_argument("--json", action="store_true")
+    triage.set_defaults(func=cmd_triage)
+
+    incidents = sub.add_parser("incidents", help="review, approve or reject drafted remediations")
+    incidents.add_argument("action", choices=["list", "show", "approve", "reject"])
+    incidents.add_argument("draft", nargs="?")
+    incidents.add_argument("--all", action="store_true", help="list decided drafts too")
+    incidents.add_argument("--by", help="who is deciding (default: $GRIDLAKE_APPROVER or $USER)")
+    incidents.add_argument("--reason", default="", help="why a draft is rejected")
+    incidents.add_argument(
+        "--apply", action="store_true", help="approve: git apply a fix to --repo-root"
+    )
+    incidents.add_argument("--repo-root", default=".")
+    incidents.set_defaults(func=cmd_incidents)
 
     sub.add_parser("lineage", help="print dataset lineage edges").set_defaults(func=cmd_lineage)
     quality = sub.add_parser("quality", help="data-quality report")

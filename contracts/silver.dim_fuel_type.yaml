@@ -5,6 +5,7 @@ domain: grid-operations
 owner: grid-analytics@gridlake.example
 classification: public
 description: Energy source dimension with renewable flag and illustrative CO2 emission factors.
+source: seeds/fuel_types.csv (reference data, changed by pull request)
 primary_key: [fuel_type]
 columns:
   - {name: fuel_type, type: string, nullable: false, business_term: Energy Source}
