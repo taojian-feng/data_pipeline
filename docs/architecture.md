@@ -12,6 +12,7 @@ Downstream consumers want very different things from the same raw data:
 | ML (SageMaker) demand forecasting | leakage-free hourly features | `gold.demand_forecast_features` |
 | Reliability engineering | frequency excursions (confidential) | `gold.grid_reliability_daily` |
 | AI agents / RAG assistants | vocabulary, relationships, citeable facts, access control | ontology + knowledge graph + vector index, grid analyst agent (`src/gridlake/agent`) |
+| Analysts and reporting teams | a new cut of the data (weekly, per region, one metric) without waiting on the platform team | self-service data product agent (`src/gridlake/selfservice`): a drafted contract, SQL and tests, merged by pull request as a declared product |
 | Data platform on-call | why a run failed or rows were rejected, and what to change | data reliability agent (`src/gridlake/reliability`): diagnosis plus a drafted fix or issue to approve |
 | Grid operations, trading, sustainability | what changed on the grid yesterday, and why | grid anomaly watcher (`src/gridlake/watcher`): a daily brief over `gold.ba_daily_energy` and `gold.fuel_mix_daily` |
 
@@ -97,6 +98,7 @@ flowchart TB
 | Grid analyst agent | `gridlake ask`: offline planner (or Claude on Bedrock), DuckDB SQL tool | Bedrock Agent + tools Lambda, Athena workgroup, Bedrock KB `Retrieve` with a classification filter |
 | Grid anomaly watcher | `gridlake watch`: briefs in `.gridlake/briefs` | EventBridge daily schedule → Lambda; public gold tables only, briefs in S3, posted on the grid-brief SNS topic |
 | Data reliability agent | `gridlake triage`: run manifests + OpenLineage events, drafts in `.gridlake/incidents` | EventBridge on Step Functions status changes → Lambda; execution history, published graph, drafts in S3, summary on SNS |
+| Self-service data products | `gridlake propose` / `gridlake products approve --pr`: drafts in `.gridlake/proposals`, a pull request on approval | No new resources: a merged contract becomes a Glue table with LF-tags, and the gold step builds it |
 
 Switching is configuration only: `GRIDLAKE_CATALOG=glue|s3tables`, `GRIDLAKE_WAREHOUSE`, `GRIDLAKE_S3_TABLES_ARN`.
 

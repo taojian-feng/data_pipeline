@@ -65,6 +65,7 @@ class Settings:
     )
     contracts_dir: Path = field(default_factory=lambda: _resource_dir("contracts", "_contracts"))
     seeds_dir: Path = field(default_factory=lambda: _resource_dir("seeds", "_seeds"))
+    transforms_dir: Path = field(default_factory=lambda: _resource_dir("transforms", "_transforms"))
 
     def resolve_eia_api_key(self) -> str | None:
         """API key from the environment, else from AWS Secrets Manager (on AWS)."""
@@ -94,6 +95,10 @@ class Settings:
     @property
     def runs_dir(self) -> Path:
         return self.home / "runs"
+
+    @property
+    def proposals_dir(self) -> Path:
+        return self.home / "proposals"
 
     @property
     def incidents_dir(self) -> Path:

@@ -43,6 +43,7 @@ make install && make demo        # or: pip install -e ".[dev]" && gridlake run
 | **Data reliability agent**: when a run fails or a quality rule spikes, it reads the run log, quality history, rejected rows, lineage and contract, records a diagnosis with evidence, and drafts a contract/seed patch or a GitHub issue. Drafts change nothing until a person approves them; fixes are confined to contracts and seeds, must validate, and never loosen a gold rule | [`reliability/`](src/gridlake/reliability), [`reliability.tf`](infra/terraform/reliability.tf), [ADR 0006](docs/adr/0006-agents-draft-people-approve.md) |
 | **Grid anomaly watcher**: a scheduled agent. Robust statistics flag unusual demand, net interchange and fuel-mix moves per balancing authority; the model explains them from the evidence (peers, forecast error, offsetting fuels, export/import switch) and writes a daily brief. The brief's numbers come from detection, not the model; it reads only public gold tables | [`watcher/`](src/gridlake/watcher), [`watcher.tf`](infra/terraform/watcher.tf), [ADR 0007](docs/adr/0007-detect-with-statistics-explain-with-the-model.md) |
 | **Least-privilege governance**: Lake Formation tag-based access control generated from contracts, KMS, TLS-only buckets | [`governance.tf`](infra/terraform/governance.tf), [`iam.tf`](infra/terraform/iam.tf) |
+| **Self-service data products**: a person describes the dataset they need; an agent drafts the contract, a SQL transformation and its tests, validated against today's tables, and approval opens the pull request. Declared products need no Python; governance (classification never below the inputs, declared inputs only, owner, unique grain) is checked at draft time and on every build | [`selfservice/`](src/gridlake/selfservice), [`transform/declared.py`](src/gridlake/transform/declared.py), [`transforms/`](transforms), [ADR 0008](docs/adr/0008-self-service-data-products-as-reviewed-code.md) |
 | **Operations**: Step Functions with retries and alerts, DLQ, iterator-age alarms, nightly Iceberg maintenance, runbook | [`orchestration.tf`](infra/terraform/orchestration.tf), [`monitoring.tf`](infra/terraform/monitoring.tf), [runbook](docs/runbook.md) |
 | **Validating AI-assisted code** in a regulated setting | [docs/ai-assisted-delivery.md](docs/ai-assisted-delivery.md) |
 
@@ -80,6 +81,7 @@ Details, the AWS deployment diagram and the local-vs-AWS mapping are in
 | gold | `fuel_mix_daily` | BA x day x energy source | public |
 | gold | `demand_forecast_features` | BA x hour, point-in-time-correct lags | internal |
 | gold | `grid_reliability_daily` | BA x day frequency excursions | confidential |
+| gold | `ba_weekly_energy` | BA x week: demand, peak, days covered (declared product, drafted by the self-service agent) | public |
 | ops | `quality.results`, `quality.quarantine` | rule evaluation / rejected row | internal / confidential |
 
 ## Quickstart
@@ -92,6 +94,7 @@ gridlake run --days 14            # full pipeline into ./.gridlake (Iceberg ware
 gridlake quality                  # rule outcomes and quarantined rows
 gridlake lineage                  # dataset lineage from OpenLineage events
 gridlake sql "SELECT * FROM gold_ba_daily_energy ORDER BY date DESC LIMIT 5"
+gridlake propose "Monthly renewable share by region" --owner esg@example.com --trace   # self-service products
 gridlake ask "What was the renewable share for CAISO on 2026-10-20?" --trace   # grid analyst agent
 gridlake run --inject-fault new_fuel_type && gridlake triage --trace           # data reliability agent
 gridlake run --grid-events && gridlake watch --trace                           # grid anomaly watcher
@@ -186,6 +189,51 @@ lake, and `GRIDLAKE_BEDROCK_KB_ID` to search the Bedrock Knowledge Base.
 
 `gridlake ask --context-only` still prints the GraphRAG context pack (linked entities, graph
 facts and clearance-filtered passages) for use in another model's prompt.
+
+### Self-service data products
+
+`gridlake propose` takes a dataset described in plain words and drafts a governed gold data
+product: the contract, one SQL file and its tests. A product is **declared**, not coded: the
+contract's `transform` block names the SQL file, its inputs and its grain, and the pipeline builds
+it after the built-in gold tables for the periods whose inputs changed, through the same strict
+quality gate. Glue tables, LF-tags, lineage and the knowledge graph follow from the contract.
+
+```text
+$ gridlake propose "Monthly renewable share by region for the sustainability report" \
+    --owner sustainability@gridlake.example --trace
+> list_tables({}) -> ok
+> get_contract({"table": "gold.fuel_mix_daily"}) -> ok
+> preview_transform({"sql": "SELECT CAST(date_trunc('month', s.date) AS DATE) AS month_start, ..."}) -> ok
+> draft_data_product({"name": "gold.region_monthly_renewable_share", ...}) -> ok
+I drafted gold.region_monthly_renewable_share (public): 8 rows, 2026-10-01 to 2026-10-01, from
+gold.fuel_mix_daily, silver.dim_balancing_authority, silver.dim_fuel_type, with 2 checks passing.
+  draft dp-region_monthly_renewable_share-d1 [product] Add data product gold.region_monthly_renewable_share
+
+$ gridlake products show dp-region_monthly_renewable_share-d1          # PR body: governance, validation, sample rows, the diff
+$ gridlake products approve dp-region_monthly_renewable_share-d1 --pr  # branch, commit, push, open the pull request
+```
+
+The draft is only saved if it holds up against today's data: the SQL's columns match the
+contract, the rows pass the drafted quality rules, and its checks (a reconciliation with the input
+and a completeness check) return no violating rows. Approval with `--pr` commits the three files on
+`data-product/<name>` in a temporary git worktree, pushes it and opens the pull request through
+the GitHub API when `GITHUB_TOKEN` and `GRIDLAKE_GITHUB_REPO` are set (else prints the `gh pr
+create` command); without `--pr` it writes the patch, and `--apply` applies it. CI then runs the
+drafted tests, which build the product end to end and check that a rebuild changes nothing.
+[`gold.ba_weekly_energy`](contracts/gold.ba_weekly_energy.yaml) was drafted this way.
+
+| Guardrail | Where |
+|---|---|
+| Classification is never below the most restricted input; the agent says so when a request asked for less | `check_product`, the designer's rationale |
+| The SQL reads only the silver and gold inputs it declares, with file access off; never bronze | `check_product`, `query_tables`, `preview_transform` |
+| The owner is the requester and the inputs come from the SQL, not from the model; clearance limits what it can read | `draft_data_product` |
+| One row per declared grain: a period date as partition and first key, an error-severity `unique` rule | `check_product` |
+| Nothing is saved unless it conforms, passes its rules and at least one check on today's data | `draft_data_product` |
+| The pipeline re-checks governance on every build; a product that breaks it fails its step | `Pipeline.build_products` |
+
+The deterministic `OfflineDesigner` drafts period roll-ups (day, week, month; per BA, region or
+interconnection) of energy, renewable share and frequency excursions; `--llm bedrock` has Claude
+design anything the governed tables can answer.
 
 ### Data reliability agent
 
@@ -323,6 +371,9 @@ with `--llm bedrock`.
 | The model writes the brief's words, never its numbers, and stays within public clearance | `test_claude_writes_the_narrative_but_not_the_numbers`, `test_the_watcher_needs_clearance_for_the_gold_tables` |
 | A new optional contract column reaches existing Iceberg tables | `test_adding_a_contract_column_evolves_an_existing_table` |
 | Nothing is filed or applied until a person approves | `test_new_fuel_type_fix_applies_and_replay_restores_the_rows`, `test_approving_an_issue_files_it_on_github` |
+| Declared products keep their governance: no declassification, declared inputs only, a unique grain | `test_governance_rules`, `test_a_product_that_breaks_governance_fails_its_step`, `test_the_tool_refuses_a_declassified_product` |
+| A drafted product, once approved, builds in the pipeline and its drafted tests pass | `test_an_approved_draft_builds_in_the_pipeline_and_its_tests_pass` |
+| Approval opens a pull request without touching the person's checkout | `test_approval_commits_on_a_branch_and_opens_the_pull_request` |
 
 ## Deploying to AWS
 
@@ -365,11 +416,15 @@ EventBridge schedule (`anomaly_watcher_schedule`, 12:00 UTC), the Lambda
 Runtime switches: `GRIDLAKE_CATALOG=glue` with `GRIDLAKE_WAREHOUSE=s3://...`, or
 `GRIDLAKE_CATALOG=s3tables` with `GRIDLAKE_S3_TABLES_ARN=arn:aws:s3tables:...`.
 
+Self-service data products need no new infrastructure: a merged product's contract becomes a
+Glue table with its LF-tags on the next `terraform apply`, and the existing gold step builds it.
+
 ## Repository layout
 
 ```text
 contracts/            data contracts (one YAML per table): schema, PK, partitioning, owner, classification, rules
 seeds/                reference data (balancing authorities, energy sources)
+transforms/           SQL for declared data products (one file per product contract)
 src/gridlake/
   sources/            EIA API client, synthetic EIA-930 replica, telemetry generator
   ingest/             idempotent batch landing, streaming consumer (log, offsets, watermarks)
@@ -377,6 +432,7 @@ src/gridlake/
   quality/            contract-driven quality engine
   knowledge/          ontology, knowledge graph, retrieval index, GraphRAG context packs
   agent/              grid analyst: agent loop, access-aware tools, Bedrock / offline models, Bedrock Agents action group
+  selfservice/        self-service data product agent: preview and draft tools, offline designer, approval to a pull request
   reliability/        data reliability agent: incident detection, triage tools, drafts and approval, fault injection
   watcher/            grid anomaly watcher: detection, context, brief writer and store, grid-event scenarios
   catalog.py          Iceberg catalogs (local / Glue / S3 Tables) and contract-bound tables
@@ -386,6 +442,7 @@ spark/                Glue 5.0 Spark jobs: Iceberg MERGE backfill, table mainten
 infra/terraform/      AWS infrastructure
 docs/                 architecture, ADRs, runbook, AI-assisted delivery
 tests/                unit and end-to-end tests
+  products/           tests drafted with each declared data product
 ```
 
 ## Scope and limits

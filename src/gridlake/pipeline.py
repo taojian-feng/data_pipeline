@@ -43,7 +43,7 @@ from gridlake.sources.eia import (
     load_balancing_authorities,
 )
 from gridlake.sources.telemetry import generate_events
-from gridlake.transform import gold, silver
+from gridlake.transform import declared, gold, silver
 
 log = logging.getLogger("gridlake")
 HWM = "gridlake.hwm."
@@ -393,9 +393,11 @@ class Pipeline:
                     energy_dates,
                 ),
             )
+        # lags reach 7 days forward, so a changed day affects the following week's features
+        horizon = sorted(
+            {d + timedelta(days=i) for d in affected.get("demand", []) for i in range(8)}
+        )
         if affected.get("demand"):
-            # lags reach 7 days forward, so a changed day affects the following week's features
-            horizon = sorted({d + timedelta(days=i) for d in affected["demand"] for i in range(8)})
             self._step(
                 "gold_demand_forecast_features",
                 ["silver.demand_hourly"],
@@ -416,6 +418,42 @@ class Pipeline:
                     tel_dates,
                 ),
             )
+        self.build_products(
+            {
+                "silver.demand_hourly": affected.get("demand", []),
+                "silver.generation_hourly": affected.get("generation", []),
+                "silver.grid_telemetry_minute": affected.get("telemetry", []),
+                "gold.ba_daily_energy": energy_dates,
+                "gold.fuel_mix_daily": energy_dates,
+                "gold.demand_forecast_features": horizon,
+                "gold.grid_reliability_daily": affected.get("telemetry", []),
+            }
+        )
+
+    def build_products(self, changed: dict[str, list[date]]) -> None:
+        """Declared data products (a contract plus one SQL file, ADR 0008), in dependency
+        order, for the periods whose input dates changed. ``changed`` maps a table to the UTC
+        days rebuilt in it, and gains each product built here."""
+        for c in declared.declared_products(self.contracts):
+            days = sorted({d for i in c.transform.get("inputs") or [] for d in changed.get(i, [])})
+            if not days:
+                continue
+
+            def run(c=c, days=days):
+                sql = declared.load_sql(c, self.settings.transforms_dir)
+                data, periods = declared.build(c, sql, self.lake.read, days, self.contracts)
+                return self.publish(
+                    c.name,
+                    data,
+                    write="overwrite",
+                    mode="strict",
+                    overwrite_filter=In(
+                        declared.period_column(c), [p.isoformat() for p in periods]
+                    ),
+                )
+
+            self._step(f"product_{c.table}", list(c.transform["inputs"]), [c.name], run)
+            changed[c.name] = days
 
     def _features(self, demand: pa.Table, dates: list[date]) -> dict:
         data = gold.demand_forecast_features(demand, dates)
