@@ -29,6 +29,7 @@ def ba_daily_energy(
                    CAST(arg_max(hour(period), demand_mwh) AS INTEGER) AS peak_hour_utc,
                    round(avg(abs(forecast_mwh - demand_mwh) / nullif(demand_mwh, 0)) * 100, 2) AS forecast_mape_pct,
                    sum(net_generation_mwh) AS net_generation_mwh,
+                   sum(interchange_mwh) AS net_interchange_mwh,
                    CAST(count(*) AS INTEGER) AS hours_reported
             FROM demand
             WHERE CAST(period AS DATE) IN (SELECT d FROM dates) AND demand_mwh IS NOT NULL
@@ -45,7 +46,7 @@ def ba_daily_energy(
         )
         SELECT dem.date, dem.ba_code, b.ba_name, b.region_name, b.interconnection,
                dem.total_demand_mwh, dem.peak_demand_mwh, dem.peak_hour_utc, dem.forecast_mape_pct,
-               dem.net_generation_mwh,
+               dem.net_generation_mwh, dem.net_interchange_mwh,
                round(100 * gen.ren_gen / nullif(gen.pos_gen, 0), 2) AS renewable_share_pct,
                round(gen.emissions_kg / nullif(gen.pos_gen, 0), 1) AS carbon_intensity_kg_per_mwh,
                round(gen.emissions_kg / 1000, 1) AS total_emissions_t,

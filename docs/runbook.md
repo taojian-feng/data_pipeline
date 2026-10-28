@@ -19,6 +19,16 @@ gridlake incidents reject <draft> --reason "..."
 On AWS the agent runs after every pipeline execution and posts to the alerts topic; set
 `GRIDLAKE_INCIDENTS_S3_URI` to the `reliability_incidents_uri` output to review its drafts.
 
+## Read or re-run the daily grid brief
+```bash
+gridlake watch                          # the latest complete UTC day; writes .gridlake/briefs/<date>.md
+gridlake watch --date 2026-10-20 --trace   # another day, with each tool call
+gridlake watch --json --no-save         # the detection and narrative as JSON
+```
+If a brief flags a demand drop at a BA that also shows a data gap (hours reported short of 24),
+check the feed with `gridlake triage` before treating it as a grid event. To re-send a day's
+brief on AWS, invoke the `anomaly-watcher` Lambda with `{"date": "YYYY-MM-DD"}`.
+
 ## Triage quarantined rows
 ```bash
 gridlake quality --samples 20

@@ -134,3 +134,31 @@ variable "reliability_agent_clearance" {
     error_message = "reliability_agent_clearance must be public, internal or confidential."
   }
 }
+
+variable "enable_anomaly_watcher" {
+  description = "Run the grid anomaly watcher once a day (EventBridge schedule -> Lambda); briefs land in S3 and on the grid-brief SNS topic."
+  type        = bool
+  default     = false
+}
+
+variable "anomaly_watcher_schedule" {
+  description = "When the watcher runs, in UTC. The default leaves EIA-930 a few hours to settle the previous day."
+  type        = string
+  default     = "cron(0 12 * * ? *)"
+}
+
+variable "anomaly_watcher_llm" {
+  description = "Model writing the brief: offline (deterministic writer, no Bedrock) or bedrock (Claude, using analyst_agent_model)."
+  type        = string
+  default     = "offline"
+  validation {
+    condition     = contains(["offline", "bedrock"], var.anomaly_watcher_llm)
+    error_message = "anomaly_watcher_llm must be offline or bedrock."
+  }
+}
+
+variable "anomaly_watcher_emails" {
+  description = "Email addresses subscribed to the daily grid brief (each must confirm by email)."
+  type        = list(string)
+  default     = []
+}

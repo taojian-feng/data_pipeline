@@ -38,6 +38,14 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest --cov=gridlake --cov-report=term-missing --cov-report=xml
+      - name: Grid anomaly watcher explains planted grid events
+        env:
+          GRIDLAKE_HOME: .gridlake-events
+        run: |
+          gridlake run --end 2026-10-15 --days 14 --no-telemetry --grid-events
+          gridlake watch --date 2026-10-14 --trace | tee brief.txt
+          grep -q "| high | ERCO | demand |" brief.txt
+          grep -q "not anticipated" brief.txt
       - uses: actions/upload-artifact@v4
         if: matrix.python-version == '3.12'
         with:

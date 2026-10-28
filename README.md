@@ -10,8 +10,9 @@ and streaming substation telemetry) into governed data products for BI, ML and A
 It covers ingestion, an Iceberg medallion lakehouse, contract-driven quality gates, OpenLineage
 lineage, a knowledge layer (ontology, knowledge graph, access-aware RAG retrieval), a
 **grid analyst agent** that answers questions by choosing its own tools and cites the tables it used,
-and a **data reliability agent** that triages failed runs and quality spikes and drafts a fix or
-GitHub issue for a person to approve.
+a **data reliability agent** that triages failed runs and quality spikes and drafts a fix or
+GitHub issue for a person to approve, and a **grid anomaly watcher** that flags unusual demand,
+interchange and fuel-mix days in the gold data products, explains them and posts a daily brief.
 
 **It runs end to end on a laptop in about 10 seconds with no cloud account**, and the same code
 deploys to AWS (S3 Tables / Glue Data Catalog, Lake Formation, Kinesis, Lambda, Glue Spark,
@@ -40,6 +41,7 @@ make install && make demo        # or: pip install -e ".[dev]" && gridlake run
 | **RAG for agents**: clearance-filtered retrieval, metadata filters, GraphRAG context packs, Bedrock KB export | [`knowledge/retrieval.py`](src/gridlake/knowledge/retrieval.py), [`knowledge/context.py`](src/gridlake/knowledge/context.py), [ADR 0005](docs/adr/0005-ontology-guardrails-and-access-aware-retrieval.md) |
 | **Grid analyst agent**: the model picks tools (SQL on gold, knowledge graph, document search, catalog) and cites tables; caller clearance is bound outside the model and enforced in every tool, then again by Lake Formation; runs offline or on Claude via Amazon Bedrock, or as a Bedrock Agent | [`agent/`](src/gridlake/agent), [`agent.tf`](infra/terraform/agent.tf), [ADR 0005](docs/adr/0005-ontology-guardrails-and-access-aware-retrieval.md) |
 | **Data reliability agent**: when a run fails or a quality rule spikes, it reads the run log, quality history, rejected rows, lineage and contract, records a diagnosis with evidence, and drafts a contract/seed patch or a GitHub issue. Drafts change nothing until a person approves them; fixes are confined to contracts and seeds, must validate, and never loosen a gold rule | [`reliability/`](src/gridlake/reliability), [`reliability.tf`](infra/terraform/reliability.tf), [ADR 0006](docs/adr/0006-agents-draft-people-approve.md) |
+| **Grid anomaly watcher**: a scheduled agent. Robust statistics flag unusual demand, net interchange and fuel-mix moves per balancing authority; the model explains them from the evidence (peers, forecast error, offsetting fuels, export/import switch) and writes a daily brief. The brief's numbers come from detection, not the model; it reads only public gold tables | [`watcher/`](src/gridlake/watcher), [`watcher.tf`](infra/terraform/watcher.tf), [ADR 0007](docs/adr/0007-detect-with-statistics-explain-with-the-model.md) |
 | **Least-privilege governance**: Lake Formation tag-based access control generated from contracts, KMS, TLS-only buckets | [`governance.tf`](infra/terraform/governance.tf), [`iam.tf`](infra/terraform/iam.tf) |
 | **Operations**: Step Functions with retries and alerts, DLQ, iterator-age alarms, nightly Iceberg maintenance, runbook | [`orchestration.tf`](infra/terraform/orchestration.tf), [`monitoring.tf`](infra/terraform/monitoring.tf), [runbook](docs/runbook.md) |
 | **Validating AI-assisted code** in a regulated setting | [docs/ai-assisted-delivery.md](docs/ai-assisted-delivery.md) |
@@ -74,7 +76,7 @@ Details, the AWS deployment diagram and the local-vs-AWS mapping are in
 | silver | `demand_hourly` | BA x hour | internal |
 | silver | `generation_hourly` | BA x hour x energy source | internal |
 | silver | `grid_telemetry_minute` | substation x minute (exactly-once) | confidential |
-| gold | `ba_daily_energy` | BA x day: demand, peak, forecast MAPE, renewable share, carbon intensity | public |
+| gold | `ba_daily_energy` | BA x day: demand, peak, forecast MAPE, net interchange, renewable share, carbon intensity | public |
 | gold | `fuel_mix_daily` | BA x day x energy source | public |
 | gold | `demand_forecast_features` | BA x hour, point-in-time-correct lags | internal |
 | gold | `grid_reliability_daily` | BA x day frequency excursions | confidential |
@@ -92,6 +94,7 @@ gridlake lineage                  # dataset lineage from OpenLineage events
 gridlake sql "SELECT * FROM gold_ba_daily_energy ORDER BY date DESC LIMIT 5"
 gridlake ask "What was the renewable share for CAISO on 2026-10-20?" --trace   # grid analyst agent
 gridlake run --inject-fault new_fuel_type && gridlake triage --trace           # data reliability agent
+gridlake run --grid-events && gridlake watch --trace                           # grid anomaly watcher
 pytest                            # 40+ tests including end-to-end idempotency and failure paths
 ```
 
@@ -242,6 +245,60 @@ execution to a Lambda that reads the execution history, scopes quality results t
 execution's time window, writes drafts to `s3://<artifacts>/incidents/` and posts a summary to
 the alerts topic.
 
+### Grid anomaly watcher
+
+`gridlake watch` checks the latest complete UTC day (or `--date`) of every balancing authority
+against its own recent history in `gold.ba_daily_energy` and `gold.fuel_mix_daily`:
+
+| Signal | Compared as | Flagged when |
+|---|---|---|
+| Demand | average per reported hour, against the median of earlier days of the same type (weekday or weekend) | robust z >= 3.5 and at least 5% |
+| Net interchange | as a share of demand, against its median | robust z >= 3.5 and at least 4 points |
+| Fuel share | the one-day move, against the usual one-day moves (wind and solar swing widely, so level alone says little) | at least 5 points, and robust z >= 3.5 or well past the window's range |
+| New energy source | no history, now at least 2% of generation | always |
+
+The robust z-score uses the median and MAD with a floor on the scale, so a very steady history
+cannot turn a wobble into an alert. Days with fewer than 20 hours reported are listed as data
+gaps, not grid events. The agent then calls `get_anomaly_context` for each anomaly (the BA's whole
+day against its usual one, the fuels that moved, interconnection peers, the forecast error, the
+export/import position) and writes one paragraph per balancing authority. `gridlake run
+--grid-events` plants three events on the last day of the window:
+
+```text
+$ gridlake run --days 14 --grid-events && gridlake watch --trace
+> get_anomaly_context({"anomaly_id": "2026-10-26/BPAT/interchange"}) -> ok
+> get_anomaly_context({"anomaly_id": "2026-10-26/ERCO/demand"}) -> ok
+...
+# Grid brief for 2026-10-26: 7 unusual changes
+
+**BPAT** (Bonneville Power Administration): net interchange moved -19.4 points of demand, to -18.2%
+(usually +1.2%). BPAT switched from net exporter to net importer. Generation moved -21.6% and
+demand -2.7%, so generation drove the shift. Hydro output fell 21.1% from the day before.
+
+**ERCO** (Electric Reliability Council of Texas, Inc.): demand ran 12.6% above a usual weekday
+(50,253 MWh an hour against 44,626); ... The day-ahead forecast missed by 12.4% (usually 2.4%),
+so the change was not anticipated. ERCO switched from net exporter to net importer. ...
+
+**SWPP** (Southwest Power Pool): ... Wind share fell 19.1 points in a day, to 3.6% (from 22.8%),
+the lowest in 13 days; ... Renewables supplied 8.9% of generation (usually 24.2%). Carbon intensity
+was 611 kg CO2/MWh (usually 503).
+
+| Severity | BA | Signal | Today | Compared with | Change | z |
+|---|---|---|---:|---|---:|---:|
+| high | BPAT | net interchange | -18.2 | 1.2 (median day, 13 days) | -19.4pp | -19.4 |
+| high | ERCO | demand | 50,253.2 | 44,626.5 (median weekday, 9 days) | +12.6% | +12.6 |
+...
+```
+
+**Statistics decide what is unusual; the model explains it**
+([ADR 0007](docs/adr/0007-detect-with-statistics-explain-with-the-model.md)). The table of numbers
+is rendered from the detection, so a model can change a brief's wording but not its figures, and
+a quiet day never calls a model. The brief goes to a wide audience, so the watcher runs with
+`public` clearance and its tools refuse anything above it. Briefs are saved as Markdown and JSON
+(`.gridlake/briefs/`, or S3 on AWS); `--announce` also posts to `GRIDLAKE_BRIEF_TOPIC_ARN`. It
+runs on the shared tool loop with the deterministic `OfflineBriefWriter` by default, or Claude
+with `--llm bedrock`.
+
 ## Guarantees backed by tests
 
 | Guarantee | Test |
@@ -261,6 +318,10 @@ the alerts topic.
 | Bedrock KB retrieval is filtered by classification server-side and checked again | `test_bedrock_retrieve_filters_by_classification_server_and_client_side` |
 | The reliability agent tells a source defect from a stale seed, and an outage from both | `test_unit_change_is_a_source_defect_and_never_a_contract_change`, `test_new_fuel_type_fix_applies_and_replay_restores_the_rows`, `test_feed_outage_is_an_upstream_outage` |
 | Agent fixes stay in contracts and seeds, bump versions, never loosen gold, and pass the dimension's rules | `test_fixes_are_confined_to_contracts_and_seeds`, `test_contract_fixes_must_bump_the_version_and_never_loosen_gold`, `test_seed_fixes_must_pass_the_dimension_rules` |
+| Planted grid events are found and explained, and the quiet day before raises nothing | `test_planted_grid_events_are_found_and_explained`, `test_the_day_before_the_events_is_quiet`, `test_a_steady_history_has_no_anomalies_even_on_weekends` |
+| A few missing hours are a data gap, not a demand drop | `test_missing_hours_are_a_data_gap_not_a_demand_drop` |
+| The model writes the brief's words, never its numbers, and stays within public clearance | `test_claude_writes_the_narrative_but_not_the_numbers`, `test_the_watcher_needs_clearance_for_the_gold_tables` |
+| A new optional contract column reaches existing Iceberg tables | `test_adding_a_contract_column_evolves_an_existing_table` |
 | Nothing is filed or applied until a person approves | `test_new_fuel_type_fix_applies_and_replay_restores_the_rows`, `test_approving_an_issue_files_it_on_github` |
 
 ## Deploying to AWS
@@ -295,6 +356,12 @@ history, quality tables, lake reads up to `reliability_agent_clearance`, drafts 
 offline responder unless `reliability_agent_llm=bedrock`. Review drafts from a laptop with
 `GRIDLAKE_INCIDENTS_S3_URI=<that uri> gridlake incidents list`.
 
+Grid anomaly watcher (off by default): `-var enable_anomaly_watcher=true` adds a daily
+EventBridge schedule (`anomaly_watcher_schedule`, 12:00 UTC), the Lambda
+(`gridlake.watcher.aws.handler`), a role that can read only public gold tables and write
+`briefs/`, a `grid-brief` SNS topic (`anomaly_watcher_emails` subscribes people) and the
+`grid_briefs_uri` output. It runs the offline brief writer unless `anomaly_watcher_llm=bedrock`.
+
 Runtime switches: `GRIDLAKE_CATALOG=glue` with `GRIDLAKE_WAREHOUSE=s3://...`, or
 `GRIDLAKE_CATALOG=s3tables` with `GRIDLAKE_S3_TABLES_ARN=arn:aws:s3tables:...`.
 
@@ -311,6 +378,7 @@ src/gridlake/
   knowledge/          ontology, knowledge graph, retrieval index, GraphRAG context packs
   agent/              grid analyst: agent loop, access-aware tools, Bedrock / offline models, Bedrock Agents action group
   reliability/        data reliability agent: incident detection, triage tools, drafts and approval, fault injection
+  watcher/            grid anomaly watcher: detection, context, brief writer and store, grid-event scenarios
   catalog.py          Iceberg catalogs (local / Glue / S3 Tables) and contract-bound tables
   pipeline.py         orchestration, lineage, quality gates, run manifests
   aws_lambda.py       Kinesis consumer and Step Functions task handlers
@@ -326,6 +394,8 @@ tests/                unit and end-to-end tests
 * The local engine is single-process; the Glue Spark job is the scale-out path for backfills.
 * The hashed TF-IDF embedder is a deterministic offline stand-in for Titan embeddings
   (`BedrockEmbedder`), and the in-memory graph is a stand-in for Amazon Neptune.
+* The watcher's thresholds are tuned on the synthetic feed; real EIA-930 data needs a few weeks
+  of history (`--lookback`) and possibly per-BA thresholds before its briefs go to a wide audience.
 * The offline planner and responder are scripted stand-ins so the agents run anywhere; open-ended
   questions and incidents outside their decision tables need `--llm bedrock`. The Bedrock and Athena paths are covered by tests with stubbed AWS clients.
 * The Terraform passes `terraform validate` in CI; applying it needs your own AWS account and

@@ -40,3 +40,12 @@ output "reliability_incidents_uri" {
   description = "Where the data reliability agent writes drafts (set GRIDLAKE_INCIDENTS_S3_URI to this to review them)."
   value       = var.enable_reliability_agent ? "s3://${aws_s3_bucket.this["artifacts"].bucket}/incidents/" : null
 }
+
+output "grid_briefs_uri" {
+  description = "Where the grid anomaly watcher writes daily briefs (null unless enable_anomaly_watcher)."
+  value       = var.enable_anomaly_watcher ? "s3://${aws_s3_bucket.this["artifacts"].bucket}/briefs/" : null
+}
+
+output "grid_brief_topic_arn" {
+  value = var.enable_anomaly_watcher ? aws_sns_topic.grid_brief[0].arn : null
+}

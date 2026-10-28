@@ -58,6 +58,11 @@ class Settings:
         default_factory=lambda: os.getenv("GRIDLAKE_ALERTS_TOPIC_ARN")
     )
     github_repo: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_GITHUB_REPO"))
+    # Grid anomaly watcher: where daily briefs go, and the topic they are announced on.
+    briefs_s3_uri: str | None = field(default_factory=lambda: os.getenv("GRIDLAKE_BRIEFS_S3_URI"))
+    brief_topic_arn: str | None = field(
+        default_factory=lambda: os.getenv("GRIDLAKE_BRIEF_TOPIC_ARN")
+    )
     contracts_dir: Path = field(default_factory=lambda: _resource_dir("contracts", "_contracts"))
     seeds_dir: Path = field(default_factory=lambda: _resource_dir("seeds", "_seeds"))
 
@@ -93,6 +98,10 @@ class Settings:
     @property
     def incidents_dir(self) -> Path:
         return self.home / "incidents"
+
+    @property
+    def briefs_dir(self) -> Path:
+        return self.home / "briefs"
 
     def ensure_dirs(self) -> None:
         for d in (
